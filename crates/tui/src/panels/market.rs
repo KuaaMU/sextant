@@ -25,15 +25,15 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     // Build header from live data
     let header = if let Some(ref ctx) = app.context {
         let instrument = ctx.instrument_id_str().to_string();
-        let price_str = app.simulator.price();
-        let change_pct = ((price_str - 150.0) / 150.0 * 100.0 * 100.0).round() / 100.0;
+        let price = app.current_price;
+        let change_pct = ((price - 150.0) / 150.0 * 100.0 * 100.0).round() / 100.0;
         let color = if change_pct >= 0.0 { Theme::OK } else { Theme::ALERT };
         let arrow = if change_pct >= 0.0 { "+" } else { "" };
 
         Line::from(vec![
             Span::styled(instrument, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::raw("  @  "),
-            Span::styled(format!("{:.2}", price_str), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:.2}", price), Style::default().fg(color).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
             Span::styled(format!("{}{:.2}%", arrow, change_pct), Style::default().fg(color)),
         ])
@@ -95,12 +95,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     lines.push(market_state_line);
     lines.push(position_line);
     lines.push(Line::raw(""));
+    let status = if app.is_simulator() {
+        format!(" Version: {}  [SIM]", app.context.as_ref().map_or(0, |c| c.version))
+    } else {
+        format!(" Version: {}  [LIVE]", app.context.as_ref().map_or(0, |c| c.version))
+    };
     lines.push(Line::from(vec![
-        Span::styled(" Tick: ", Style::default().fg(Theme::TEXT_DIM)),
-        Span::styled(
-            format!("{}", app.simulator.tick_count()),
-            Style::default().fg(Theme::INFO),
-        ),
+        Span::styled(&status, Style::default().fg(Theme::INFO)),
         Span::raw("  "),
         Span::styled("j/k:instrument  +/-:zoom  Space:pause", Style::default().fg(Theme::TEXT_DIM)),
     ]));

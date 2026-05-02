@@ -22,11 +22,16 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
+    let w = area.width as usize;
+    let sep = "─".repeat(w.saturating_sub(2));
+    let selected_prefix = "── Selected: #002 ";
+    let detail_sep = "─".repeat(w.saturating_sub(selected_prefix.len() + 2));
+
     let lines = vec![
         Line::from(vec![
-            Span::styled("ID            Instrument  Side  Qty    Price    Status    Slippage", Style::default().fg(Theme::TEXT_DIM)),
+            Span::styled("ID         Instrument  Side  Qty    Price    Status    Slippage", Style::default().fg(Theme::TEXT_DIM)),
         ]),
-        Line::raw("────────────────────────────────────────────────────────────────────"),
+        Line::raw(sep),
         Line::from(vec![
             Span::styled(" #001  SOL-USDC   BUY    50.0  market   ", Style::default().fg(Theme::TEXT)),
             Span::styled("● FILL", Style::default().fg(Theme::FILL).add_modifier(Modifier::BOLD)),
@@ -54,8 +59,8 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("── Selected: #002 ", Style::default().fg(Theme::PANEL_BORDER_ACTIVE)),
-            Span::styled("────────────────────────────────────", Style::default().fg(Theme::PANEL_BORDER)),
+            Span::styled(selected_prefix, Style::default().fg(Theme::PANEL_BORDER_ACTIVE)),
+            Span::styled(detail_sep, Style::default().fg(Theme::PANEL_BORDER)),
         ]),
         Line::from(vec![
             Span::raw(" Intent: "),

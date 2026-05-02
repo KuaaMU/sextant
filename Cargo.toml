@@ -7,6 +7,7 @@ members = [
   "crates/autoresearch",
   "crates/reputation",
   "crates/tui",
+  "crates/gui",
 ]
 
 [workspace.package]

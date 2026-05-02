@@ -3,6 +3,7 @@
 use nautilus_model::data::QuoteTick;
 
 use crate::context_window::{ContextWindow, EventToken};
+use crate::mmap_shm::MmapWriter;
 use crate::shared_buffer::SharedStateBuffer;
 
 /// Encodes Nautilus internal events into shared-memory ContextWindows.
@@ -13,6 +14,7 @@ use crate::shared_buffer::SharedStateBuffer;
 pub struct StateEncoder {
     buffer: SharedStateBuffer,
     current: ContextWindow,
+    mmap_writer: Option<MmapWriter>,
 }
 
 impl StateEncoder {
@@ -23,7 +25,15 @@ impl StateEncoder {
         Self {
             buffer: SharedStateBuffer::new(),
             current,
+            mmap_writer: None,
         }
+    }
+
+    /// Enable file-backed mmap output for cross-process reading (e.g., TUI).
+    pub fn with_mmap(mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let writer = MmapWriter::open(path)?;
+        self.mmap_writer = Some(writer);
+        Ok(self)
     }
 
     /// Handle a quote tick update.
@@ -52,6 +62,9 @@ impl StateEncoder {
 
         // Write to shared memory
         self.buffer.write(&self.current);
+        if let Some(ref mut writer) = self.mmap_writer {
+            writer.write(&self.current);
+        }
     }
 
     /// Update position state.
@@ -61,6 +74,9 @@ impl StateEncoder {
         self.current.unrealized_pnl = unrealized_pnl;
         self.current.version += 1;
         self.buffer.write(&self.current);
+        if let Some(ref mut writer) = self.mmap_writer {
+            writer.write(&self.current);
+        }
     }
 
     /// Update risk potential values.
@@ -70,6 +86,9 @@ impl StateEncoder {
         self.current.drawdown_potential = drawdown;
         self.current.version += 1;
         self.buffer.write(&self.current);
+        if let Some(ref mut writer) = self.mmap_writer {
+            writer.write(&self.current);
+        }
     }
 
     /// Get read access to the shared buffer (for agent processes).
@@ -90,6 +109,7 @@ mod tests {
     use nautilus_model::data::QuoteTick;
     use nautilus_model::identifiers::InstrumentId;
     use nautilus_model::types::{Price, Quantity};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_encoder_quote_update() {
@@ -112,5 +132,46 @@ mod tests {
         assert_eq!(ctx.version, 1);
         assert!(ctx.market_state_str().contains("150.00"));
         assert_eq!(ctx.event_count(), 1);
+    }
+
+    #[test]
+    fn test_encoder_mmap_output() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let id = InstrumentId::from("ETH-USDC.OKX");
+        let mut encoder = StateEncoder::new("ETH-USDC").with_mmap(path).unwrap();
+
+        let quote = QuoteTick::new(
+            id,
+            Price::from("3200.00"),
+            Price::from("3200.10"),
+            Quantity::from("5.0"),
+            Quantity::from("3.0"),
+            UnixNanos::from(2_000_000_000),
+            UnixNanos::from(2_000_000_001),
+        );
+
+        encoder.on_quote(&quote);
+
+        // Read back via MmapReader (simulates cross-process TUI)
+        let reader = crate::mmap_shm::MmapReader::open(path).unwrap();
+        let ctx = reader.read().unwrap();
+        assert_eq!(ctx.version, 1);
+        assert!(ctx.market_state_str().contains("3200.00"));
+    }
+
+    #[test]
+    fn test_encoder_mmap_position_update() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut encoder = StateEncoder::new("SOL-USDC").with_mmap(tmp.path()).unwrap();
+
+        encoder.update_position(10.0, 150.25, 5.0);
+
+        let reader = crate::mmap_shm::MmapReader::open(tmp.path()).unwrap();
+        let ctx = reader.read().unwrap();
+        assert_eq!(ctx.position_size, 10.0);
+        assert_eq!(ctx.entry_price, 150.25);
+        assert_eq!(ctx.unrealized_pnl, 5.0);
     }
 }

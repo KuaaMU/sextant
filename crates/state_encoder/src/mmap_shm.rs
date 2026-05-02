@@ -175,4 +175,77 @@ mod tests {
         assert!(size > 8000);
         assert!(size < 10000);
     }
+
+    #[test]
+    fn test_cross_thread_concurrent_read_write() {
+        // Simulates cross-process behavior: one writer thread, one reader thread.
+        // On Windows, file-backed mmap visibility is not instant — `read()` returning
+        // `None` is expected (seq mismatch from stale page cache, not data corruption).
+        // The critical invariant: every `Some(ctx)` has consistent, non-garbled data
+        // and versions are monotonically non-decreasing.
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+
+        // Create the file and writer first so the file exists with correct size.
+        let mut writer = MmapWriter::open(&path).unwrap();
+        // Write initial data so reader can open a valid file.
+        let mut ctx0 = ContextWindow::zeroed();
+        ctx0.set_instrument_id("SOL-USDC");
+        writer.write(&ctx0);
+
+        let write_count = 5000u64;
+
+        // Now both threads share the same file handle — move writer to its thread.
+        let writer_handle = std::thread::spawn(move || {
+            for i in 0..write_count {
+                let mut ctx = ContextWindow::zeroed();
+                ctx.version = i;
+                ctx.position_size = i as f64 * 0.01;
+                ctx.set_instrument_id("SOL-USDC");
+                writer.write(&ctx);
+            }
+        });
+
+        // Reader thread: reads until it sees the final version.
+        // Small delay to ensure reader opens after file is created.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let reader_handle = std::thread::spawn(move || {
+            let reader = MmapReader::open(&path).unwrap();
+            let mut successful_reads = 0u64;
+            let mut last_version = 0u64;
+            let mut consistency_violations = 0u64;
+
+            loop {
+                if let Some(ctx) = reader.read() {
+                    successful_reads += 1;
+                    // Data integrity: instrument_id must be preserved
+                    if ctx.instrument_id_str() != "SOL-USDC" {
+                        consistency_violations += 1;
+                    }
+                    // Version should be monotonically non-decreasing
+                    if ctx.version < last_version {
+                        consistency_violations += 1;
+                    }
+                    // Position must match version
+                    let expected_pos = ctx.version as f64 * 0.01;
+                    if (ctx.position_size - expected_pos).abs() > 1e-10 {
+                        consistency_violations += 1;
+                    }
+                    last_version = ctx.version;
+                    if last_version >= write_count - 1 {
+                        break;
+                    }
+                }
+                // `None` is expected on file-backed mmap — page cache visibility delay
+            }
+
+            (successful_reads, consistency_violations)
+        });
+
+        writer_handle.join().unwrap();
+        let (successful, violations) = reader_handle.join().unwrap();
+
+        assert!(successful > 0, "Reader should have read at least one snapshot");
+        assert_eq!(violations, 0, "Data consistency violations: {}", violations);
+    }
 }

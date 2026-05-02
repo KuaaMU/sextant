@@ -59,16 +59,17 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         ]));
         lines.push(Line::raw(""));
 
-        // Potential bars
-        lines.push(potential_bar("Position", pos_pot, 1.0));
-        lines.push(potential_bar("Drawdown", dd_pot, 1.0));
-        lines.push(potential_bar("Concentration", risk_pot * 0.6, 1.0));
+        // Potential bars — bar width adapts to panel width
+        let bar_w = (area.width as usize).saturating_sub(34).max(5).min(40);
+        lines.push(potential_bar("Position", pos_pot, 1.0, bar_w));
+        lines.push(potential_bar("Drawdown", dd_pot, 1.0, bar_w));
+        lines.push(potential_bar("Concentration", risk_pot * 0.6, 1.0, bar_w));
 
         lines.push(Line::raw(""));
 
         // Greeks
         lines.push(Line::raw("Greeks Matrix"));
-        lines.push(Line::raw("──────────────────────────────────────────────────"));
+        lines.push(Line::raw("─".repeat(area.width as usize - 2)));
         lines.push(Line::raw("           Delta      Gamma      Theta      Vega"));
         lines.push(Line::from(vec![
             Span::styled(
@@ -90,7 +91,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(paragraph, area);
 }
 
-fn potential_bar(label: &str, value: f64, limit: f64) -> Line<'static> {
+fn potential_bar(label: &str, value: f64, limit: f64, bar_w: usize) -> Line<'static> {
     let pct = ((value / limit) * 100.0).min(100.0) as u16;
     let color = if pct > 80 {
         Theme::ALERT
@@ -100,8 +101,8 @@ fn potential_bar(label: &str, value: f64, limit: f64) -> Line<'static> {
         Theme::OK
     };
 
-    let filled = (pct as usize * 20) / 100;
-    let empty = 20 - filled;
+    let filled = (pct as usize * bar_w) / 100;
+    let empty = bar_w - filled;
     let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
 
     Line::from(vec![

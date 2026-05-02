@@ -1,6 +1,6 @@
 //! Global keybinding handler.
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{ActivePanel, App};
 
@@ -56,11 +56,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Poll for a key event (non-blocking).
+/// Poll for a key event (non-blocking). Only returns Press events (filters Release on Windows).
 pub fn poll_key() -> Option<KeyEvent> {
     if event::poll(std::time::Duration::from_millis(0)).ok()? {
         if let Event::Key(key) = event::read().ok()? {
-            return Some(key);
+            if key.kind == KeyEventKind::Press {
+                return Some(key);
+            }
         }
     }
     None

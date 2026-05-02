@@ -3,7 +3,16 @@
 use nautilus_state_encoder::ContextWindow;
 use ratatui::widgets::Borders;
 
+use crate::data::mmap_source::MmapSource;
 use crate::data::simulator::Simulator;
+
+/// Data source for the TUI.
+pub enum DataSource {
+    /// Built-in simulator (default).
+    Simulator(Simulator),
+    /// Read from engine's mmap file.
+    Mmap(MmapSource),
+}
 
 /// Which panel is currently focused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,14 +134,16 @@ pub struct App {
     pub zen_mode: bool,
     /// Frame counter for status display.
     pub frame_count: u64,
-    /// Market data simulator.
-    pub simulator: Simulator,
-    /// Latest context window from simulator.
+    /// Data source (simulator or mmap).
+    pub data_source: DataSource,
+    /// Latest context window.
     pub context: Option<ContextWindow>,
     /// Price history for sparkline.
     pub price_history: PriceHistory,
     /// Simulated agent log entries.
     pub log_entries: Vec<LogEntry>,
+    /// Current price (tracked from context updates).
+    pub current_price: f64,
 }
 
 /// A simulated agent log entry.
@@ -171,35 +182,70 @@ impl App {
             show_help: false,
             zen_mode: false,
             frame_count: 0,
-            simulator: Simulator::new(150.0),
+            data_source: DataSource::Simulator(Simulator::new(150.0)),
             context: None,
             price_history: PriceHistory::new(60),
             log_entries: Vec::new(),
+            current_price: 150.0,
         }
     }
 
-    /// Tick the simulator and update state.
+    pub fn with_mmap(path: &str) -> std::io::Result<Self> {
+        let source = MmapSource::open(path)?;
+        Ok(Self {
+            active: ActivePanel::Market,
+            running: true,
+            paused: false,
+            show_help: false,
+            zen_mode: false,
+            frame_count: 0,
+            data_source: DataSource::Mmap(source),
+            context: None,
+            price_history: PriceHistory::new(60),
+            log_entries: Vec::new(),
+            current_price: 0.0,
+        })
+    }
+
+    pub fn is_simulator(&self) -> bool {
+        matches!(self.data_source, DataSource::Simulator(_))
+    }
+
+    /// Tick: read latest data and update state.
     pub fn tick(&mut self) {
         if self.paused {
             return;
         }
 
-        self.simulator.tick();
-        self.context = self.simulator.read();
+        match &mut self.data_source {
+            DataSource::Simulator(sim) => {
+                sim.tick();
+                self.context = sim.read();
+                if self.context.is_some() {
+                    self.current_price = sim.price();
+                    self.price_history.push(self.current_price);
 
-        if self.context.is_some() {
-            self.price_history.push(self.simulator.price());
-
-            // Generate simulated log entries every 10 ticks
-            if self.frame_count % 10 == 0 {
-                let tick = self.simulator.tick_count();
-                let entries = generate_log_entries(tick, self.simulator.price());
-                for entry in entries {
-                    self.log_entries.push(entry);
-                    // Keep last 100 entries
-                    if self.log_entries.len() > 100 {
-                        self.log_entries.remove(0);
+                    if self.frame_count % 10 == 0 {
+                        let tick = sim.tick_count();
+                        let entries = generate_log_entries(tick, self.current_price);
+                        for entry in entries {
+                            self.log_entries.push(entry);
+                            if self.log_entries.len() > 100 {
+                                self.log_entries.remove(0);
+                            }
+                        }
                     }
+                }
+            }
+            DataSource::Mmap(source) => {
+                if let Some(ctx) = source.poll() {
+                    // Extract price from market state text
+                    let state = ctx.market_state_str();
+                    if let Some(price) = parse_mid_price(state) {
+                        self.current_price = price;
+                        self.price_history.push(price);
+                    }
+                    self.context = Some(ctx);
                 }
             }
         }
@@ -222,6 +268,20 @@ impl App {
             true
         }
     }
+}
+
+/// Parse mid-price from market state text like "bid:150.20 | ask:150.30 | ..."
+fn parse_mid_price(state: &str) -> Option<f64> {
+    let bid_part = state.strip_prefix("bid:")?;
+    let bid_str = bid_part.split(|c: char| !c.is_ascii_digit() && c != '.').next()?;
+    let bid: f64 = bid_str.parse().ok()?;
+
+    let ask_marker = state.find("ask:")?;
+    let ask_part = &state[ask_marker + 4..];
+    let ask_str = ask_part.split(|c: char| !c.is_ascii_digit() && c != '.').next()?;
+    let ask: f64 = ask_str.parse().ok()?;
+
+    Some((bid + ask) / 2.0)
 }
 
 fn generate_log_entries(tick: u64, price: f64) -> Vec<LogEntry> {

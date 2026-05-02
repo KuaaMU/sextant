@@ -6,7 +6,7 @@ mod input;
 mod panels;
 mod theme;
 
-use std::io;
+use std::io::{self, Write};
 
 use color_eyre::Result;
 use crossterm::{
@@ -25,8 +25,27 @@ use ratatui::{
 
 use app::{ActivePanel, App};
 
+/// Guard that restores terminal state on drop (panic, early return, or normal exit).
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = io::stdout().flush();
+    }
+}
+
 fn main() -> Result<()> {
     color_eyre::install()?;
+
+    // Install panic hook that restores terminal before printing the panic message.
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        original_hook(info);
+    }));
 
     // Setup terminal
     enable_raw_mode()?;
@@ -35,16 +54,25 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    // Guard ensures terminal is restored even if run() returns early or panics.
+    let _guard = TerminalGuard;
+
+    // Parse CLI: `sextant-tui --mmap <path>` to read from engine, otherwise use simulator.
+    let args: Vec<String> = std::env::args().collect();
+    let mut app = if let Some(pos) = args.iter().position(|a| a == "--mmap") {
+        if let Some(path) = args.get(pos + 1) {
+            App::with_mmap(path)?
+        } else {
+            eprintln!("Usage: sextant-tui [--mmap <path>]");
+            return Ok(());
+        }
+    } else {
+        App::new()
+    };
+
     let result = run(&mut terminal, &mut app);
 
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    drop(_guard);
     terminal.show_cursor()?;
 
     result
@@ -174,6 +202,12 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" ▶ Running ", Style::default().fg(Color::Black).bg(Color::Green))
     };
 
+    let mode = if app.is_simulator() {
+        Span::styled(" [SIM] ", Style::default().fg(Color::DarkGray))
+    } else {
+        Span::styled(" [LIVE] ", Style::default().fg(Color::Green))
+    };
+
     let fps = Span::styled(
         format!(" {}fps ", 60),
         Style::default().fg(Color::DarkGray),
@@ -184,7 +218,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray),
     );
 
-    let line = Line::from(vec![paused, fps, help_hint]);
+    let line = Line::from(vec![paused, mode, fps, help_hint]);
     let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Rgb(20, 20, 30)));
     f.render_widget(paragraph, area);
 }
