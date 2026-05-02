@@ -34,6 +34,8 @@ fn main() {
     });
 
     // Background data thread → UI via mpsc
+    // Unbounded channel; UI drains all pending frames each tick (keeping latest).
+    // Adaptive polling backoff when no new data.
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
@@ -54,12 +56,21 @@ fn main() {
             }
         };
 
+        // Adaptive polling: fast when data flows, back off when idle
+        let mut poll_interval = Duration::from_millis(8); // ~120Hz
+        let min_interval = Duration::from_millis(8);
+        let max_interval = Duration::from_millis(50); // ~20Hz minimum
+
         loop {
             if let Some(ctx) = source.try_read() {
                 let logs = source.drain_logs();
                 let _ = tx.send(DataPayload { context: ctx, logs });
+                poll_interval = min_interval;
+            } else {
+                // No new data — exponential backoff
+                poll_interval = (poll_interval * 2).min(max_interval);
             }
-            thread::sleep(Duration::from_millis(8)); // ~120Hz
+            thread::sleep(poll_interval);
         }
     });
 
