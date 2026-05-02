@@ -35,6 +35,18 @@ impl Tab {
             Self::Memory => "[6] Memory",
         }
     }
+
+    fn from_number(n: u8) -> Option<Self> {
+        match n {
+            1 => Some(Self::Market),
+            2 => Some(Self::AgentLog),
+            3 => Some(Self::Risk),
+            4 => Some(Self::Orders),
+            5 => Some(Self::Research),
+            6 => Some(Self::Memory),
+            _ => None,
+        }
+    }
 }
 
 /// Price history ring buffer.
@@ -179,6 +191,7 @@ pub struct SextantApp {
     pub state: GuiState,
     pub rx: mpsc::Receiver<DataPayload>,
     pub dock_style: egui_dock::Style,
+    pub fonts_loaded: bool,
 }
 
 impl SextantApp {
@@ -205,18 +218,122 @@ impl SextantApp {
             state: GuiState::default(),
             rx,
             dock_style: SextantTheme::dock_style(),
+            fonts_loaded: false,
+        }
+    }
+
+    /// Load system fonts on first frame.
+    fn setup_fonts(&self, ctx: &egui::Context) {
+        let mut fonts = egui::FontDefinitions::default();
+
+        // Try loading Consolas (Windows monospace)
+        if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\consola.ttf") {
+            fonts.font_data.insert(
+                "consolas".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(data)),
+            );
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                family.push("consolas".to_owned());
+            }
+        }
+
+        // Try loading Segoe UI (Windows proportional)
+        if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf") {
+            fonts.font_data.insert(
+                "segoeui".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(data)),
+            );
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                family.push("segoeui".to_owned());
+            }
+        }
+
+        ctx.set_fonts(fonts);
+    }
+
+    /// Switch to a specific tab by number (1-6).
+    fn switch_to_tab(&mut self, tab: Tab) {
+        // Find which (surface, node) contains this tab
+        let found = self
+            .dock_state
+            .iter_all_tabs()
+            .find(|(_, t)| **t == tab)
+            .map(|((s, n), _)| (s, n));
+
+        if let Some((si, ni)) = found {
+            // Get the node from the surface's tree to find tab index
+            if let Some(tree) = self.dock_state.get_surface(si).and_then(|s| s.node_tree()) {
+                let node = &tree[ni];
+                if let Some(tabs) = node.tabs() {
+                    for (idx, t) in tabs.iter().enumerate() {
+                        if *t == tab {
+                            self.dock_state
+                                .set_active_tab((si, ni, egui_dock::TabIndex(idx)));
+                            self.dock_state
+                                .set_focused_node_and_surface((si, ni));
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 impl eframe::App for SextantApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Load fonts once on first frame
+        if !self.fonts_loaded {
+            self.setup_fonts(ctx);
+            self.fonts_loaded = true;
+        }
+
         // Drain all pending data from the background thread
         while let Ok(payload) = self.rx.try_recv() {
             self.state.update(payload);
         }
 
         SextantTheme::apply(ctx);
+
+        // Keyboard shortcuts
+        ctx.input(|i| {
+            // Number keys 1-6 switch tabs
+            for n in 1..=6u8 {
+                let key = match n {
+                    1 => egui::Key::Num1,
+                    2 => egui::Key::Num2,
+                    3 => egui::Key::Num3,
+                    4 => egui::Key::Num4,
+                    5 => egui::Key::Num5,
+                    6 => egui::Key::Num6,
+                    _ => unreachable!(),
+                };
+                if i.key_pressed(key) {
+                    if let Some(tab) = Tab::from_number(n) {
+                        self.switch_to_tab(tab);
+                    }
+                }
+            }
+
+            // Ctrl+R: reset layout to default
+            if i.key_pressed(egui::Key::R) && i.modifiers.ctrl {
+                let mut dock = DockState::new(vec![Tab::Market]);
+                let [left, _] = dock.main_surface_mut().split_left(
+                    NodeIndex::root(),
+                    0.3,
+                    vec![Tab::AgentLog],
+                );
+                let [top_right, _] = dock
+                    .main_surface_mut()
+                    .split_right(left, 0.6, vec![Tab::Risk]);
+                let [mid_right, _] = dock
+                    .main_surface_mut()
+                    .split_below(top_right, 0.5, vec![Tab::Orders]);
+                dock.main_surface_mut()
+                    .split_below(mid_right, 0.5, vec![Tab::Research]);
+                self.dock_state = dock;
+            }
+        });
 
         // Render dock with Cyberpunk-Terminal style
         egui_dock::DockArea::new(&mut self.dock_state)
