@@ -5,8 +5,10 @@
 
 pub mod context_window;
 pub mod encoder;
+pub mod mmap_shm;
 pub mod shared_buffer;
 
 pub use context_window::{ContextWindow, EventToken, Greeks};
 pub use encoder::StateEncoder;
+pub use mmap_shm::{MmapReader, MmapWriter};
 pub use shared_buffer::SharedStateBuffer;

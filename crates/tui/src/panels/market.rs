@@ -22,34 +22,156 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    let lines = vec![
+    // Build header from live data
+    let header = if let Some(ref ctx) = app.context {
+        let instrument = ctx.instrument_id_str().to_string();
+        let price_str = app.simulator.price();
+        let change_pct = ((price_str - 150.0) / 150.0 * 100.0 * 100.0).round() / 100.0;
+        let color = if change_pct >= 0.0 { Theme::OK } else { Theme::ALERT };
+        let arrow = if change_pct >= 0.0 { "+" } else { "" };
+
+        Line::from(vec![
+            Span::styled(instrument, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::raw("  @  "),
+            Span::styled(format!("{:.2}", price_str), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled(format!("{}{:.2}%", arrow, change_pct), Style::default().fg(color)),
+        ])
+    } else {
         Line::from(vec![
             Span::styled("SOL-USDC", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::raw("  @  "),
-            Span::styled("150.23", Style::default().fg(Theme::OK).add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
-            Span::styled("+2.3%", Style::default().fg(Theme::OK)),
-        ]),
-        Line::raw(""),
-        Line::raw("Order Book                    Recent Trades"),
-        Line::raw("───────────────────────────── ─────────────────────"),
-        Line::raw(" Price    Size     Total       Time    Price   Size  Side"),
-        Line::raw(" 150.50   12.5    ████████    11:14   150.23  0.5   BUY"),
-        Line::raw(" 150.40   8.3     █████░░░    11:14   150.20  1.2   SELL"),
-        Line::raw(" 150.30   45.2    █████████   11:13   150.25  0.3   BUY"),
-        Line::raw("──────── best ask ──────────  11:13   150.30  2.0   SELL"),
-        Line::raw(" 150.20   23.1    █████████   11:13   150.22  0.8   BUY"),
-        Line::raw(" 150.10   67.4    ██████████  11:12   150.15  1.5   BUY"),
-        Line::raw(" 150.00   120.0   ██████████"),
-        Line::raw("──────── best bid ──────────"),
-        Line::raw(""),
+            Span::styled("---", Style::default().fg(Theme::TEXT_DIM)),
+        ])
+    };
+
+    // Sparkline from price history
+    let sparkline = render_sparkline(&app.price_history.prices, area.width.saturating_sub(4) as usize);
+
+    // Position info from live data
+    let position_line = if let Some(ref ctx) = app.context {
+        if ctx.position_size != 0.0 {
+            let pnl_color = if ctx.unrealized_pnl >= 0.0 { Theme::OK } else { Theme::ALERT };
+            Line::from(vec![
+                Span::styled(" Position: ", Style::default().fg(Theme::TEXT_DIM)),
+                Span::styled(format!("{:.1}", ctx.position_size), Style::default().fg(Theme::TEXT)),
+                Span::raw("  PnL: "),
+                Span::styled(format!("{:+.2}", ctx.unrealized_pnl), Style::default().fg(pnl_color)),
+                Span::raw("  Entry: "),
+                Span::styled(format!("{:.2}", ctx.entry_price), Style::default().fg(Theme::TEXT_DIM)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled(" Position: ", Style::default().fg(Theme::TEXT_DIM)),
+                Span::styled("flat", Style::default().fg(Theme::TEXT_DIM)),
+            ])
+        }
+    } else {
+        Line::raw("")
+    };
+
+    // Market state from live data
+    let market_state_line = if let Some(ref ctx) = app.context {
+        let state = ctx.market_state_str();
         Line::from(vec![
-            Span::styled(" [1m] [5m] [15m] [1h]", Style::default().fg(Theme::TEXT_DIM)),
-            Span::raw("  "),
-            Span::styled("h/l:pan  +/-:zoom  j/k:instrument", Style::default().fg(Theme::TEXT_DIM)),
-        ]),
+            Span::styled(" ", Style::default()),
+            Span::styled(state, Style::default().fg(Theme::TEXT_DIM)),
+        ])
+    } else {
+        Line::raw("")
+    };
+
+    let mut lines = vec![
+        header,
+        Line::raw(""),
     ];
+
+    // Add sparkline (price chart)
+    for line in sparkline {
+        lines.push(line);
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(market_state_line);
+    lines.push(position_line);
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled(" Tick: ", Style::default().fg(Theme::TEXT_DIM)),
+        Span::styled(
+            format!("{}", app.simulator.tick_count()),
+            Style::default().fg(Theme::INFO),
+        ),
+        Span::raw("  "),
+        Span::styled("j/k:instrument  +/-:zoom  Space:pause", Style::default().fg(Theme::TEXT_DIM)),
+    ]));
 
     let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(paragraph, area);
+}
+
+/// Render a simple ASCII sparkline from price data.
+fn render_sparkline(prices: &[f64], width: usize) -> Vec<Line<'static>> {
+    if prices.len() < 2 || width < 10 {
+        return vec![Line::raw("  (waiting for data...)")];
+    }
+
+    let min = prices.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let range = max - min;
+    if range < 0.001 {
+        return vec![Line::raw("  (flat)")];
+    }
+
+    // Use braille characters for sub-character resolution
+    let chart_height: usize = 8;
+    let mut grid = vec![vec![' '; width]; chart_height];
+
+    // Sample prices to fit width
+    let step = if prices.len() > width {
+        prices.len() / width
+    } else {
+        1
+    };
+
+    let mut prev_y = 0usize;
+    for (i, chunk) in prices.chunks(step).enumerate().take(width) {
+        let price = chunk[chunk.len() - 1];
+        let normalized = (price - min) / range;
+        let y = chart_height - 1 - (normalized * (chart_height - 1) as f64) as usize;
+        let y = y.min(chart_height - 1);
+
+        if i > 0 {
+            // Draw connecting line
+            let y_from = prev_y.min(y);
+            let y_to = prev_y.max(y);
+            for yy in y_from..=y_to {
+                grid[yy][i] = '│';
+            }
+        }
+        grid[y][i] = '●';
+        prev_y = y;
+    }
+
+    // Convert grid to lines with axis labels
+    let mut result = Vec::new();
+    for (row_idx, row) in grid.iter().enumerate() {
+        let label = if row_idx == 0 {
+            format!("{:>8.2} ┤", max)
+        } else if row_idx == chart_height - 1 {
+            format!("{:>8.2} ┤", min)
+        } else if row_idx == chart_height / 2 {
+            let mid = (max + min) / 2.0;
+            format!("{:>8.2} ┤", mid)
+        } else {
+            "          │".to_string()
+        };
+
+        let line_str: String = row.iter().collect();
+        result.push(Line::from(vec![
+            Span::styled(label, Style::default().fg(Theme::TEXT_DIM)),
+            Span::styled(line_str, Style::default().fg(Theme::INFO)),
+        ]));
+    }
+
+    result
 }

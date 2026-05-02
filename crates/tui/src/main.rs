@@ -1,6 +1,7 @@
 //! Sextant TUI — terminal dashboard for the trading engine.
 
 mod app;
+mod data;
 mod input;
 mod panels;
 mod theme;
@@ -59,6 +60,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
         if !app.running {
             break;
         }
+
+        // Tick simulator (generates new market data)
+        app.tick();
 
         // Draw
         terminal.draw(|f| draw(f, app))?;

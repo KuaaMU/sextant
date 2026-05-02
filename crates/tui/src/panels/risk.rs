@@ -22,51 +22,92 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("SOL-USDC", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    let mut lines = Vec::new();
+
+    if let Some(ref ctx) = app.context {
+        let instrument = ctx.instrument_id_str();
+        let risk_pot = ctx.risk_potential;
+        let pos_pot = ctx.position_potential;
+        let dd_pot = ctx.drawdown_potential;
+
+        let risk_color = if risk_pot > 0.8 {
+            Theme::ALERT
+        } else if risk_pot > 0.5 {
+            Theme::WARN
+        } else {
+            Theme::OK
+        };
+
+        let gradient = (pos_pot * pos_pot + dd_pot * dd_pot).sqrt();
+        let grad_label = if gradient > 0.5 {
+            "high"
+        } else if gradient > 0.2 {
+            "moderate"
+        } else {
+            "low"
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(instrument, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::raw("  Risk Potential: "),
-            Span::styled("0.52", Style::default().fg(Theme::WARN)),
+            Span::styled(format!("{:.2}", risk_pot), Style::default().fg(risk_color)),
             Span::raw("  │  Gradient: "),
-            Span::styled("0.23 (moderate)", Style::default().fg(Theme::WARN)),
-        ]),
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled("Position", Style::default().fg(Theme::TEXT_DIM)),
-            Span::raw("              "),
-            Span::styled("Drawdown", Style::default().fg(Theme::TEXT_DIM)),
-            Span::raw("              "),
-            Span::styled("Concentration", Style::default().fg(Theme::TEXT_DIM)),
-        ]),
-        Line::from(vec![
-            Span::styled("U(p) = 0.45     ", Style::default().fg(Theme::WARN)),
-            Span::styled("U(d) = 0.08     ", Style::default().fg(Theme::OK)),
-            Span::styled("U(w) = 0.31     ", Style::default().fg(Theme::WARN)),
-        ]),
-        Line::from(vec![
-            Span::styled("45% of limit    ", Style::default().fg(Theme::TEXT_DIM)),
-            Span::styled("8% of limit     ", Style::default().fg(Theme::TEXT_DIM)),
-            Span::styled("31% of limit    ", Style::default().fg(Theme::TEXT_DIM)),
-        ]),
-        Line::raw(""),
-        Line::raw("Greeks Matrix"),
-        Line::raw("──────────────────────────────────────────────────"),
-        Line::raw("           Delta      Gamma      Theta      Vega"),
-        Line::from(vec![
-            Span::styled(" SOL-USDC  +0.45      0.012      -23.5      +12.3", Style::default().fg(Theme::TEXT)),
-        ]),
-        Line::from(vec![
-            Span::styled(" ETH-USDC  -0.30      0.008      -15.2      +8.7 ", Style::default().fg(Theme::TEXT_DIM)),
-        ]),
-        Line::from(vec![
-            Span::styled(" BTC-USDC  +0.15      0.003       -8.1      +5.2 ", Style::default().fg(Theme::TEXT_DIM)),
-        ]),
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled(" j/k:instrument  g:Greeks  p:potential  !:emergency close", Style::default().fg(Theme::TEXT_DIM)),
-        ]),
-    ];
+            Span::styled(
+                format!("{:.2} ({})", gradient, grad_label),
+                Style::default().fg(risk_color),
+            ),
+        ]));
+        lines.push(Line::raw(""));
+
+        // Potential bars
+        lines.push(potential_bar("Position", pos_pot, 1.0));
+        lines.push(potential_bar("Drawdown", dd_pot, 1.0));
+        lines.push(potential_bar("Concentration", risk_pot * 0.6, 1.0));
+
+        lines.push(Line::raw(""));
+
+        // Greeks
+        lines.push(Line::raw("Greeks Matrix"));
+        lines.push(Line::raw("──────────────────────────────────────────────────"));
+        lines.push(Line::raw("           Delta      Gamma      Theta      Vega"));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {:<10} {:+.3}      {:.4}      {:+.1}      {:+.1}",
+                    instrument, ctx.greeks.delta, ctx.greeks.gamma, ctx.greeks.theta, ctx.greeks.vega),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]));
+    } else {
+        lines.push(Line::styled("  Waiting for data...", Style::default().fg(Theme::TEXT_DIM)));
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled(" j/k:instrument  g:Greeks  p:potential  !:emergency close", Style::default().fg(Theme::TEXT_DIM)),
+    ]));
 
     let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(paragraph, area);
+}
+
+fn potential_bar(label: &str, value: f64, limit: f64) -> Line<'static> {
+    let pct = ((value / limit) * 100.0).min(100.0) as u16;
+    let color = if pct > 80 {
+        Theme::ALERT
+    } else if pct > 50 {
+        Theme::WARN
+    } else {
+        Theme::OK
+    };
+
+    let filled = (pct as usize * 20) / 100;
+    let empty = 20 - filled;
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+
+    Line::from(vec![
+        Span::styled(format!(" {:<12}", label), Style::default().fg(Theme::TEXT_DIM)),
+        Span::styled(format!("U = {:.2}  ", value), Style::default().fg(color)),
+        Span::styled(bar, Style::default().fg(color)),
+        Span::styled(format!("  {}%", pct), Style::default().fg(Theme::TEXT_DIM)),
+    ])
 }
