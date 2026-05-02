@@ -17,10 +17,14 @@ license = "LGPL-3.0-or-later"
 description = "Sextant: AI-native quant engine built on NautilusTrader"
 
 [workspace.dependencies]
-# NautilusTrader fork — minimal, tag-locked
+# NautilusTrader fork — tag-locked
 nautilus-core = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
 nautilus-model = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
 nautilus-common = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-trading = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-execution = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-portfolio = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-analysis = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
 
 # Async
 tokio = { version = "1", features = ["full"] }
@@ -49,6 +53,9 @@ uuid = { version = "1", features = ["v4"] }
 
 # Logging
 tracing = "0.1"
+
+# Error handling
+anyhow = "1"
 
 # Utilities
 ustr = "1"

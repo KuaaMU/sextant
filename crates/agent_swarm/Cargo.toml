@@ -8,8 +8,11 @@ license.workspace = true
 [dependencies]
 nautilus-core = { workspace = true }
 nautilus-model = { workspace = true }
+nautilus-common = { workspace = true }
+nautilus-trading = { workspace = true }
 nautilus-state-encoder = { path = "../state_encoder" }
 
+anyhow = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }

@@ -6,10 +6,12 @@
 pub mod agent;
 pub mod compiler;
 pub mod intent;
+pub mod strategy_wrapper;
 pub mod swarm;
 
 // Re-export core types
 pub use agent::{Agent, AgentFeedback};
 pub use compiler::IntentCompiler;
 pub use intent::{AgentIntent, ExecutionDirective, ExecutionStyle, IntentType};
+pub use strategy_wrapper::SwarmStrategy;
 pub use swarm::{ConsensusStrategy, SwarmCoordinator};
