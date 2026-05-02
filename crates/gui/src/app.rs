@@ -71,6 +71,99 @@ impl PriceHistory {
     }
 }
 
+/// OHLCV bar accumulator — groups N price ticks into one candlestick bar.
+pub struct OhlcvAccumulator {
+    pub bars: Vec<OhlcvBar>,
+    pub max_len: usize,
+    pub group_size: usize,
+    // Current bar state
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: f64,
+    tick_count: usize,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct OhlcvBar {
+    pub time: chrono::DateTime<chrono::Utc>,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+}
+
+impl OhlcvAccumulator {
+    pub fn new(group_size: usize, max_len: usize) -> Self {
+        Self {
+            bars: Vec::with_capacity(max_len),
+            max_len,
+            group_size,
+            open: 0.0,
+            high: f64::NEG_INFINITY,
+            low: f64::INFINITY,
+            close: 0.0,
+            volume: 0.0,
+            tick_count: 0,
+        }
+    }
+
+    /// Feed a new price tick. Returns `Some(bar)` when a bar is completed.
+    pub fn push(&mut self, price: f64, volume: f64) -> Option<OhlcvBar> {
+        if self.tick_count == 0 {
+            self.open = price;
+            self.high = price;
+            self.low = price;
+        } else {
+            self.high = self.high.max(price);
+            self.low = self.low.min(price);
+        }
+        self.close = price;
+        self.volume += volume;
+        self.tick_count += 1;
+
+        if self.tick_count >= self.group_size {
+            let bar = OhlcvBar {
+                time: chrono::Utc::now(),
+                open: self.open,
+                high: self.high,
+                low: self.low,
+                close: self.close,
+                volume: self.volume,
+            };
+            // Ring buffer eviction
+            if self.bars.len() >= self.max_len {
+                self.bars.remove(0);
+            }
+            self.bars.push(bar.clone());
+            self.tick_count = 0;
+            Some(bar)
+        } else {
+            None
+        }
+    }
+
+    /// Get the current incomplete bar (open/high/low/close so far).
+    #[allow(dead_code)]
+    pub fn current(&self) -> Option<OhlcvBar> {
+        if self.tick_count > 0 {
+            Some(OhlcvBar {
+                time: chrono::Utc::now(),
+                open: self.open,
+                high: self.high,
+                low: self.low,
+                close: self.close,
+                volume: self.volume,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 /// GUI-side agent log entry.
 pub struct LogEntry {
     pub timestamp: String,
@@ -134,6 +227,7 @@ impl From<data::LogEntry> for LogEntry {
 pub struct GuiState {
     pub context: Option<ContextWindow>,
     pub price_history: PriceHistory,
+    pub ohlcv: OhlcvAccumulator,
     pub log_entries: Vec<LogEntry>,
     pub current_price: f64,
     pub last_version: u64,
@@ -144,6 +238,7 @@ impl Default for GuiState {
         Self {
             context: None,
             price_history: PriceHistory::new(600),
+            ohlcv: OhlcvAccumulator::new(10, 200), // 10 ticks per bar, 200 bars max
             log_entries: Vec::new(),
             current_price: 150.0,
             last_version: 0,
@@ -156,6 +251,7 @@ impl GuiState {
         self.current_price =
             parse_mid_price(payload.context.market_state_str()).unwrap_or(self.current_price);
         self.price_history.push(self.current_price);
+        self.ohlcv.push(self.current_price, 1.0);
         self.last_version = payload.context.version;
         self.context = Some(payload.context);
 
