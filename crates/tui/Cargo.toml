@@ -1,0 +1,22 @@
+[package]
+name = "sextant-tui"
+version.workspace = true
+edition.workspace = true
+description = "Terminal dashboard for Sextant trading engine"
+license.workspace = true
+
+[[bin]]
+name = "sextant-tui"
+path = "src/main.rs"
+
+[dependencies]
+nautilus-state-encoder = { path = "../state_encoder" }
+
+ratatui = "0.29"
+crossterm = "0.28"
+color-eyre = "0.6"
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
