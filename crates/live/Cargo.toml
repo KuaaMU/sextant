@@ -1,0 +1,26 @@
+[package]
+name = "sextant-live"
+version.workspace = true
+edition.workspace = true
+description = "Sextant live trading — OKX demo via NautilusTrader LiveNode"
+license.workspace = true
+
+[[bin]]
+name = "sextant-live"
+path = "src/main.rs"
+
+[dependencies]
+nautilus-core = { workspace = true }
+nautilus-model = { workspace = true }
+nautilus-common = { workspace = true }
+nautilus-trading = { workspace = true }
+nautilus-live = { workspace = true }
+nautilus-okx = { workspace = true }
+nautilus-agent-swarm = { path = "../agent_swarm" }
+nautilus-state-encoder = { path = "../state_encoder" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+dotenvy = "0.15"

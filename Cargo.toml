@@ -8,6 +8,7 @@ members = [
   "crates/reputation",
   "crates/tui",
   "crates/gui",
+  "crates/live",
 ]
 
 [workspace.package]
@@ -27,6 +28,8 @@ nautilus-trading = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag 
 nautilus-execution = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
 nautilus-portfolio = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
 nautilus-analysis = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-live = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0", features = ["node"] }
+nautilus-okx = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
 
 # Async
 tokio = { version = "1", features = ["full"] }
