@@ -1,0 +1,21 @@
+[package]
+name = "nautilus-autoresearch"
+version.workspace = true
+edition.workspace = true
+description = "Autoresearch ratchet for continuous strategy evolution"
+license.workspace = true
+
+[dependencies]
+nautilus-core = { workspace = true }
+nautilus-agent-swarm = { path = "../agent_swarm" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+ustr = { workspace = true }
+ahash = { workspace = true }
+
+[features]
+default = []

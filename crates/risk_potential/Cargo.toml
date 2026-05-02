@@ -1,0 +1,13 @@
+[package]
+name = "nautilus-risk-potential"
+version.workspace = true
+edition.workspace = true
+description = "Differentiable risk potential field for Sextant"
+license.workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+ustr = { workspace = true }
+
+[features]
+default = []

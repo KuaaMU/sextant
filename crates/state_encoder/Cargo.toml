@@ -1,0 +1,22 @@
+[package]
+name = "nautilus-state-encoder"
+version.workspace = true
+edition.workspace = true
+description = "Shared memory state encoder for Sextant"
+license.workspace = true
+
+[dependencies]
+nautilus-core = { workspace = true }
+nautilus-model = { workspace = true }
+nautilus-common = { workspace = true }
+
+memmap2 = { workspace = true }
+rkyv = { workspace = true }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+ustr = { workspace = true }
+ahash = { workspace = true }
+
+[features]
+default = []

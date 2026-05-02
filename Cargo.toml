@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/agent_swarm",
+  "crates/state_encoder",
+  "crates/risk_potential",
+  "crates/autoresearch",
+  "crates/reputation",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95.0"
+authors = ["KuaaMU"]
+license = "LGPL-3.0-or-later"
+description = "Sextant: AI-native quant engine built on NautilusTrader"
+
+[workspace.dependencies]
+# NautilusTrader fork — minimal, tag-locked
+nautilus-core = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-model = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-common = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rkyv = { version = "0.8", features = ["bytecheck"] }
+
+# Shared memory
+memmap2 = "0.9"
+
+# Concurrency
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+
+# Ethereum
+ethers = "2"
+
+# Cryptography
+sha3 = "0.10"
+
+# UUID
+uuid = { version = "1", features = ["v4"] }
+
+# Logging
+tracing = "0.1"
+
+# Utilities
+ustr = "1"
+ahash = "0.8"
