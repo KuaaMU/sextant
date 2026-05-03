@@ -56,10 +56,15 @@ async fn main() -> anyhow::Result<()> {
     let instrument_id = InstrumentId::from("BTC-USDT.OKX");
     let environment = Environment::Live;
 
+    // Load OKX credentials from environment (.env file)
+    let okx_api_key = std::env::var("OKX_API_KEY").ok();
+    let okx_api_secret = std::env::var("OKX_API_SECRET").ok();
+    let okx_passphrase = std::env::var("OKX_API_PASSPHRASE").ok();
+
     let data_config = OKXDataClientConfig {
-        api_key: None,
-        api_secret: None,
-        api_passphrase: None,
+        api_key: okx_api_key.clone(),
+        api_secret: okx_api_secret.clone(),
+        api_passphrase: okx_passphrase.clone(),
         instrument_types: vec![OKXInstrumentType::Spot],
         environment: OKXEnvironment::Demo,
         ..Default::default()
@@ -68,9 +73,9 @@ async fn main() -> anyhow::Result<()> {
     let exec_config = OKXExecClientConfig {
         trader_id,
         account_id,
-        api_key: None,
-        api_secret: None,
-        api_passphrase: None,
+        api_key: okx_api_key,
+        api_secret: okx_api_secret,
+        api_passphrase: okx_passphrase,
         instrument_types: vec![OKXInstrumentType::Spot],
         environment: OKXEnvironment::Demo,
         ..Default::default()
