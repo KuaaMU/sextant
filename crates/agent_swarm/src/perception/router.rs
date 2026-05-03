@@ -166,14 +166,21 @@ impl PerceptionRouter {
         let position = ctx.position_size;
         let risk = ctx.risk_potential;
 
-        // Rule 1: High risk → reduce position
-        if risk > 0.8 {
+        // Rule 1: Risk gradient pressure → proportional position reduction
+        // Smooth transition: risk 0.5 → 25% reduction, 0.8 → 80%, 1.0 → full exit
+        if risk > 0.5 {
+            let reduction = ((risk - 0.5) * 2.0).clamp(0.0, 1.0); // 0.5→0.0, 1.0→1.0
+            let target = position * (1.0 - reduction);
+            let confidence = 0.7 + risk * 0.25; // 0.7..0.95
             return PerceptionDecision {
                 layer: RoutingLayer::Rule,
                 intent_type: IntentType::MeanReversion,
-                confidence: 0.95,
-                reasoning: format!("High risk potential ({:.2}), reducing exposure", risk),
-                target_size: 0.0,
+                confidence,
+                reasoning: format!(
+                    "Risk gradient {:.2} → reducing position {:.4} → {:.4} ({:.0}% reduction)",
+                    risk, position, target, reduction * 100.0
+                ),
+                target_size: target,
             };
         }
 

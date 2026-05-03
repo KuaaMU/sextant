@@ -11,6 +11,7 @@ nautilus-model = { workspace = true }
 nautilus-common = { workspace = true }
 nautilus-trading = { workspace = true }
 nautilus-state-encoder = { path = "../state_encoder" }
+nautilus-reputation = { path = "../reputation" }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }

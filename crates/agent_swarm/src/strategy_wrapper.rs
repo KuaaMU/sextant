@@ -24,6 +24,7 @@ use tracing::{debug, info, warn};
 
 use crate::intent::{ExecutionDirective, OrderSide, TimeInForce};
 use crate::swarm::SwarmCoordinator;
+use nautilus_reputation::AutonomySlider;
 
 /// Nautilus Strategy wrapper for the Sextant AgentSwarm.
 ///
@@ -37,6 +38,12 @@ pub struct SwarmStrategy {
     swarm: SwarmCoordinator,
     position_size: f64,
     entry_price: f64,
+    /// Reputation-based autonomy slider — gates position size.
+    autonomy: AutonomySlider,
+    /// Running trade count for reputation scoring.
+    trade_count: u32,
+    /// Running win count for reputation scoring.
+    win_count: u32,
 }
 
 impl SwarmStrategy {
@@ -67,6 +74,9 @@ impl SwarmStrategy {
             swarm,
             position_size: 0.0,
             entry_price: 0.0,
+            autonomy: AutonomySlider::new(5), // 5 trades before level changes
+            trade_count: 0,
+            win_count: 0,
         }
     }
 
@@ -123,6 +133,8 @@ impl Debug for SwarmStrategy {
         f.debug_struct("SwarmStrategy")
             .field("instrument_id", &self.instrument_id)
             .field("agent_count", &self.swarm.agent_count())
+            .field("autonomy", &self.autonomy.current())
+            .field("trades", &self.trade_count)
             .finish()
     }
 }
@@ -189,6 +201,26 @@ impl DataActor for SwarmStrategy {
         // Update StateEncoder with new position
         self.encoder
             .update_position(self.position_size, self.entry_price, unrealized_pnl);
+
+        // Update reputation on position close
+        if new_size.abs() < 1e-12 && old_size.abs() > 1e-12 {
+            let realized_pnl = (price - self.entry_price) * old_size;
+            self.trade_count += 1;
+            if realized_pnl > 0.0 {
+                self.win_count += 1;
+            }
+            let win_rate = self.win_count as f64 / self.trade_count as f64;
+            // Score: 50 base + 50 * win_rate, clamped to 0-100
+            let score = (50.0 + 50.0 * win_rate).clamp(0.0, 100.0);
+            let level = self.autonomy.update(score);
+            info!(
+                "Reputation: trade#{} win_rate={:.1}% score={:.1} autonomy={:?}",
+                self.trade_count,
+                win_rate * 100.0,
+                score,
+                level
+            );
+        }
 
         Ok(())
     }
