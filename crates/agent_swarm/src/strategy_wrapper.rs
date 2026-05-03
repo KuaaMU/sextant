@@ -11,6 +11,7 @@ use nautilus_common::actor::DataActor;
 use nautilus_model::{
     data::QuoteTick,
     enums::{OrderSide as NautilusOrderSide, TimeInForce as NautilusTif},
+    events::order::filled::OrderFilled,
     identifiers::InstrumentId,
     types::Quantity,
 };
@@ -34,6 +35,8 @@ pub struct SwarmStrategy {
     instrument_id: InstrumentId,
     encoder: StateEncoder,
     swarm: SwarmCoordinator,
+    position_size: f64,
+    entry_price: f64,
 }
 
 impl SwarmStrategy {
@@ -62,6 +65,8 @@ impl SwarmStrategy {
             instrument_id,
             encoder: StateEncoder::new(&symbol),
             swarm,
+            position_size: 0.0,
+            entry_price: 0.0,
         }
     }
 
@@ -135,6 +140,56 @@ impl DataActor for SwarmStrategy {
     fn on_stop(&mut self) -> anyhow::Result<()> {
         info!("SwarmStrategy stopped");
         self.unsubscribe_quotes(self.instrument_id, None, None);
+        Ok(())
+    }
+
+    fn on_order_filled(&mut self, event: &OrderFilled) -> anyhow::Result<()> {
+        let qty = event.last_qty.as_f64();
+        let price = event.last_px.as_f64();
+        let side_sign = if event.order_side == NautilusOrderSide::Buy {
+            1.0
+        } else {
+            -1.0
+        };
+
+        // Update position with weighted average entry price
+        let delta = side_sign * qty;
+        let old_size = self.position_size;
+        let new_size = old_size + delta;
+
+        if new_size.abs() < 1e-12 {
+            // Position closed
+            self.position_size = 0.0;
+            self.entry_price = 0.0;
+        } else if old_size.abs() < 1e-12 {
+            // New position
+            self.position_size = new_size;
+            self.entry_price = price;
+        } else if old_size.signum() == delta.signum() {
+            // Adding to position — weighted average entry
+            self.entry_price =
+                (self.entry_price * old_size.abs() + price * qty) / (old_size.abs() + qty);
+            self.position_size = new_size;
+        } else {
+            // Reducing position
+            self.position_size = new_size;
+        }
+
+        let unrealized_pnl = if self.position_size.abs() > 1e-12 {
+            (price - self.entry_price) * self.position_size
+        } else {
+            0.0
+        };
+
+        info!(
+            "Order filled: {} {} @ {:.2} → position={:.6} entry={:.2} pnl={:.2}",
+            event.order_side, qty, price, self.position_size, self.entry_price, unrealized_pnl
+        );
+
+        // Update StateEncoder with new position
+        self.encoder
+            .update_position(self.position_size, self.entry_price, unrealized_pnl);
+
         Ok(())
     }
 
