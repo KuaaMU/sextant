@@ -1,0 +1,54 @@
+# Sextant LLM Configuration
+#
+# Free models for development/testing. Switch to paid models for production.
+
+[providers.openrouter]
+api_base = "https://openrouter.ai/api/v1"
+api_key = "${OPENROUTER_API_KEY}"
+timeout_secs = 30
+
+[providers.local]
+api_base = "http://localhost:8000/v1"
+api_key = "not-needed"
+timeout_secs = 60
+
+# ── Free Models (development) ───────────────────────────────────────
+
+[models.small]
+provider = "openrouter"
+model = "openai/gpt-oss-120b:free"
+temperature = 0.3
+max_tokens = 256
+
+[models.large]
+provider = "openrouter"
+model = "openai/gpt-oss-120b:free"
+temperature = 0.2
+max_tokens = 512
+
+[models.alt]
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
+temperature = 0.7
+max_tokens = 512
+
+# ── Paid Models (production, uncomment to use) ─────────────────────
+
+# [models.small]
+# provider = "openrouter"
+# model = "qwen/qwen3-8b"
+# temperature = 0.7
+# max_tokens = 512
+
+# [models.large]
+# provider = "openrouter"
+# model = "qwen/qwen3-27b"
+# temperature = 0.5
+# max_tokens = 1024
+
+# ── Role Routing ────────────────────────────────────────────────────
+
+[roles]
+perception = "small"
+strategy = "large"
+fallback = "small"

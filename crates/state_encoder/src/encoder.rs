@@ -41,29 +41,63 @@ impl StateEncoder {
         self.current.version += 1;
         self.current.timestamp_ns = quote.ts_event.as_u64();
 
+        // Push to event trace first (needed for momentum calculation)
+        let mid = (quote.bid_price.as_f64() + quote.ask_price.as_f64()) / 2.0;
+        self.current.push_event(EventToken {
+            event_type: 0, // Quote
+            price: mid,
+            size: quote.bid_size.as_f64() + quote.ask_size.as_f64(),
+            timestamp_ns: quote.ts_event.as_u64(),
+        });
+
+        // Calculate momentum from event trace
+        let momentum = self.calculate_momentum();
+
         // Format market state as LLM-readable text
+        let spread_bps = if mid > 0.0 {
+            ((quote.ask_price.as_f64() - quote.bid_price.as_f64()) / mid) * 10000.0
+        } else {
+            0.0
+        };
         let state = format!(
-            "OrderBook[{}] bid:{} @ {} | ask:{} @ {}",
+            "OrderBook[{}] bid:{} @ {} | ask:{} @ {} | mid:{:.2} | spread:{:.1}bps | momentum:{:+.6} | position:{}",
             self.current.instrument_id_str(),
             quote.bid_size,
             quote.bid_price,
             quote.ask_size,
             quote.ask_price,
+            mid,
+            spread_bps,
+            momentum,
+            self.current.position_size,
         );
         self.current.set_market_state(&state);
-
-        // Push to event trace
-        self.current.push_event(EventToken {
-            event_type: 0, // Quote
-            price: (quote.bid_price.as_f64() + quote.ask_price.as_f64()) / 2.0,
-            size: quote.bid_size.as_f64() + quote.ask_size.as_f64(),
-            timestamp_ns: quote.ts_event.as_u64(),
-        });
 
         // Write to shared memory
         self.buffer.write(&self.current);
         if let Some(ref mut writer) = self.mmap_writer {
             writer.write(&self.current);
+        }
+    }
+
+    /// Calculate price momentum from the event trace (percentage change over ~10 ticks).
+    fn calculate_momentum(&self) -> f64 {
+        let count = self.current.event_count();
+        if count < 2 {
+            return 0.0;
+        }
+        let recent_idx = ((count - 1) as usize) % 64;
+        let old_idx = if count > 10 {
+            ((count - 10) as usize) % 64
+        } else {
+            0
+        };
+        let recent = self.current.event_trace[recent_idx].price;
+        let old = self.current.event_trace[old_idx].price;
+        if old > 0.0 {
+            (recent - old) / old
+        } else {
+            0.0
         }
     }
 

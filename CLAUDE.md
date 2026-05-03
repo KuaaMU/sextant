@@ -2,7 +2,7 @@
 
 ## Project Overview
 Sextant: AI-native quantitative trading engine.
-NautilusTrader fork: `KuaaMU/nautilus_trader` (tag: `sextant-base-v1.211.0`)
+NautilusTrader fork: `KuaaMU/nautilus_trader` (tag: `sextant-base-v1.211.1`)
 Exchange: OKX (Demo Trading → Live).
 
 ## Architecture
@@ -31,7 +31,15 @@ Standalone workspace depending on NautilusTrader via git:
 export PATH="$PATH:/c/Users/Administrator/.cargo/bin"
 cargo check --workspace
 cargo test --workspace
+cargo run -p sextant-live
 ```
+
+## Logging
+NautilusTrader's OKX adapter uses `log::info!()` / `log::debug!()` for diagnostics.
+By default `stdout_level=Info` filters out debug messages. To see full adapter output:
+- Set `stdout_level: LevelFilter::Debug` in `LoggerConfig`
+- Set `use_tracing: true` for external crate tracing
+- Or set `RUST_LOG=debug` env var
 
 ## Phases
 - P0 (now-Jun): OKX demo, understand MessageBus/ExecutionEngine

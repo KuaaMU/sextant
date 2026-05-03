@@ -1,6 +1,7 @@
 //! Sextant Live — OKX demo trading via NautilusTrader LiveNode.
 //!
 //! Connects the SwarmStrategy to OKX demo environment for live paper trading.
+//! Loads LLM config from `llm.toml` at workspace root.
 //!
 //! ## Setup
 //!
@@ -11,14 +12,20 @@
 //!    OKX_API_PASSPHRASE=your-passphrase
 //!    ```
 //!
-//! 2. Run:
+//! 2. Set `OPENROUTER_API_KEY` in env or `.env` for LLM inference.
+//!
+//! 3. Run:
 //!    ```bash
 //!    cargo run -p sextant-live
 //!    ```
 
 mod momentum_agent;
 
-use nautilus_common::enums::Environment;
+use log::LevelFilter;
+use nautilus_common::{
+    enums::Environment,
+    logging::logger::LoggerConfig,
+};
 use nautilus_live::node::LiveNode;
 use nautilus_model::identifiers::{AccountId, InstrumentId, TraderId};
 use nautilus_okx::{
@@ -27,32 +34,33 @@ use nautilus_okx::{
     factories::{OKXDataClientFactory, OKXExecutionClientFactory},
 };
 
-use nautilus_agent_swarm::{ConsensusStrategy, SwarmCoordinator, SwarmStrategy};
+use nautilus_agent_swarm::{
+    ConsensusStrategy, PerceptionRouter, RouterConfig, SwarmCoordinator, SwarmStrategy,
+};
 
 use momentum_agent::MomentumAgent;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load .env file (ignore if missing)
     dotenvy::dotenv().ok();
 
-    // NOTE: Do NOT init tracing_subscriber here — NautilusTrader's LiveNode
-    // registers its own logger on startup and will panic if one already exists.
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
 
-    // Use eprintln for pre-node messages since the logger isn't available yet.
     eprintln!("Sextant Live — OKX Demo Trading");
 
     // ── Configuration ───────────────────────────────────────────
     let trader_id = TraderId::from("SEXTANT-001");
     let account_id = AccountId::from("OKX-DEMO-001");
-    let instrument_id = InstrumentId::from("ETH-USDT-SWAP.OKX");
-    let environment = Environment::Live; // LiveNode requires Live; OKX env is Demo
+    let instrument_id = InstrumentId::from("BTC-USDT.OKX");
+    let environment = Environment::Live;
 
     let data_config = OKXDataClientConfig {
-        api_key: None,        // Uses OKX_API_KEY env var
-        api_secret: None,     // Uses OKX_API_SECRET env var
-        api_passphrase: None, // Uses OKX_API_PASSPHRASE env var
-        instrument_types: vec![OKXInstrumentType::Swap],
+        api_key: None,
+        api_secret: None,
+        api_passphrase: None,
+        instrument_types: vec![OKXInstrumentType::Spot],
         environment: OKXEnvironment::Demo,
         ..Default::default()
     };
@@ -63,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         api_key: None,
         api_secret: None,
         api_passphrase: None,
-        instrument_types: vec![OKXInstrumentType::Swap],
+        instrument_types: vec![OKXInstrumentType::Spot],
         environment: OKXEnvironment::Demo,
         ..Default::default()
     };
@@ -72,8 +80,16 @@ async fn main() -> anyhow::Result<()> {
     let data_factory = OKXDataClientFactory::new();
     let exec_factory = OKXExecutionClientFactory::new();
 
+    let logging_config = LoggerConfig {
+        stdout_level: LevelFilter::Debug,
+        use_tracing: true,
+        print_config: true,
+        ..Default::default()
+    };
+
     let mut node = LiveNode::builder(trader_id, environment)?
         .with_name("Sextant-Live".to_string())
+        .with_logging(logging_config)
         .add_data_client(
             Some("OKX".to_string()),
             Box::new(data_factory),
@@ -88,13 +104,49 @@ async fn main() -> anyhow::Result<()> {
         .with_delay_post_stop_secs(5)
         .build()?;
 
+    // ── LLM Config ──────────────────────────────────────────────
+    let config_path = std::path::Path::new("llm.toml");
+    let router = if config_path.exists() {
+        eprintln!("Loading LLM config from llm.toml...");
+        match nautilus_agent_swarm::LlmConfigFile::load(config_path) {
+            Ok(config) => {
+                eprintln!(
+                    "  Models: {:?}, Roles: perception={}, strategy={}",
+                    config.models.keys().collect::<Vec<_>>(),
+                    config.roles.perception,
+                    config.roles.strategy,
+                );
+                match config.build_role_llm("perception") {
+                    Ok(llm) => {
+                        eprintln!("  LLM ready: {}", llm.chat_url());
+                        Some(PerceptionRouter::new(RouterConfig::default()).with_small_llm(Box::new(llm)))
+                    }
+                    Err(e) => {
+                        eprintln!("  Warning: failed to build LLM: {}. Using rules-only.", e);
+                        Some(PerceptionRouter::new(RouterConfig::default()))
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  Warning: failed to load llm.toml: {}. Using rules-only.", e);
+                Some(PerceptionRouter::new(RouterConfig::default()))
+            }
+        }
+    } else {
+        eprintln!("No llm.toml found. Using rules-only perception.");
+        Some(PerceptionRouter::new(RouterConfig::default()))
+    };
+
     // ── Strategy ────────────────────────────────────────────────
     let mut swarm = SwarmCoordinator::new(ConsensusStrategy::Pipeline);
+    if let Some(router) = router {
+        swarm = swarm.with_router(router);
+    }
     swarm.add_agent(Box::new(MomentumAgent::new(
         "momentum-01",
         instrument_id,
-        0.002,  // momentum threshold
-        5.0,    // base position size
+        0.0005, // 0.05% — BTC moves ~0.1% per 10 ticks on demo
+        0.001,  // 0.001 BTC for demo
     )));
 
     let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm);

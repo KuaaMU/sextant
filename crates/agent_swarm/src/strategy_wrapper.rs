@@ -55,10 +55,12 @@ impl SwarmStrategy {
             swarm.agent_count()
         );
 
+        // ContextWindow stores symbol only (e.g. "BTC-USDT"), venue is added by SwarmCoordinator
+        let symbol = instrument_id.symbol.as_str().to_string();
         Self {
             core: StrategyCore::new(config),
             instrument_id,
-            encoder: StateEncoder::new(&instrument_id.to_string()),
+            encoder: StateEncoder::new(&symbol),
             swarm,
         }
     }
@@ -137,6 +139,11 @@ impl DataActor for SwarmStrategy {
     }
 
     fn on_quote(&mut self, quote: &QuoteTick) -> anyhow::Result<()> {
+        info!(
+            "Quote received: {} bid={} ask={}",
+            quote.instrument_id, quote.bid_price, quote.ask_price
+        );
+
         // 1. Feed quote into StateEncoder → ContextWindow → SharedStateBuffer
         self.encoder.on_quote(quote);
 
@@ -149,6 +156,8 @@ impl DataActor for SwarmStrategy {
                 self.swarm.run_cycle(ctx).await
             })
         });
+
+        debug!("Swarm cycle produced {} directives", directives.len());
 
         // 3. Execute resulting directives
         if !directives.is_empty() {

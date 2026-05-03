@@ -6,6 +6,7 @@ use tracing::{debug, info};
 use crate::agent::Agent;
 use crate::compiler::IntentCompiler;
 use crate::intent::{AgentIntent, ExecutionDirective, IntentType};
+use crate::perception::router::PerceptionRouter;
 
 /// Strategy for resolving conflicts between multiple agents.
 #[derive(Clone, Debug)]
@@ -22,6 +23,9 @@ pub enum ConsensusStrategy {
 pub struct SwarmCoordinator {
     agents: Vec<Box<dyn Agent>>,
     consensus: ConsensusStrategy,
+    router: Option<PerceptionRouter>,
+    /// Default venue for instrument IDs (e.g., "OKX").
+    venue: String,
 }
 
 impl SwarmCoordinator {
@@ -29,7 +33,21 @@ impl SwarmCoordinator {
         Self {
             agents: Vec::new(),
             consensus,
+            router: None,
+            venue: "OKX".to_string(),
         }
+    }
+
+    /// Set the default venue for instrument IDs (default: "OKX").
+    pub fn with_venue(mut self, venue: &str) -> Self {
+        self.venue = venue.to_string();
+        self
+    }
+
+    /// Attach a three-layer perception router to the swarm.
+    pub fn with_router(mut self, router: PerceptionRouter) -> Self {
+        self.router = Some(router);
+        self
     }
 
     /// Register an agent in the swarm.
@@ -39,9 +57,26 @@ impl SwarmCoordinator {
     }
 
     /// Run one perception-decision cycle across all agents.
+    ///
+    /// If a router is attached, it runs first as a baseline perception layer.
+    /// Agents then refine or override the router's decision.
     pub async fn run_cycle(&mut self, ctx: &ContextWindow) -> Vec<ExecutionDirective> {
-        // 1. Collect intents from all agents
+        // 1. Router baseline (if attached)
         let mut intents = Vec::new();
+        if let Some(ref router) = self.router {
+            let decision = router.route(ctx).await;
+            info!(
+                "Router baseline: {:?} from {:?} (confidence {:.2})",
+                decision.intent_type, decision.layer, decision.confidence
+            );
+            let symbol = ctx.instrument_id_str();
+            let instrument = nautilus_model::identifiers::InstrumentId::from(
+                format!("{}.{}", symbol, self.venue).as_str()
+            );
+            intents.push(decision.to_intent("router", instrument));
+        }
+
+        // 2. Collect intents from all agents
         for agent in &mut self.agents {
             let intent = agent.perceive(ctx).await;
             debug!(

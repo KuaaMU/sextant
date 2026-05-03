@@ -21,15 +21,15 @@ description = "Sextant: AI-native quant engine built on NautilusTrader"
 
 [workspace.dependencies]
 # NautilusTrader fork — tag-locked
-nautilus-core = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-model = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-common = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-trading = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-execution = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-portfolio = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-analysis = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
-nautilus-live = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0", features = ["node"] }
-nautilus-okx = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.0" }
+nautilus-core = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-model = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-common = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-trading = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-execution = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-portfolio = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-analysis = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
+nautilus-live = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1", features = ["node"] }
+nautilus-okx = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.1" }
 
 # Async
 tokio = { version = "1", features = ["full"] }
