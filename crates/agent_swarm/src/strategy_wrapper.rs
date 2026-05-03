@@ -143,9 +143,11 @@ impl DataActor for SwarmStrategy {
         // 2. Read current context and run swarm cycle
         let ctx = self.encoder.current_context();
         // Note: run_cycle is async, but on_quote is sync.
-        // We use block_on here since the swarm cycle should be fast (<10ms for Layer 1).
-        let directives = tokio::runtime::Handle::current().block_on(async {
-            self.swarm.run_cycle(ctx).await
+        // Use block_in_place to safely block within the tokio runtime.
+        let directives = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.swarm.run_cycle(ctx).await
+            })
         });
 
         // 3. Execute resulting directives

@@ -36,20 +36,16 @@ async fn main() -> anyhow::Result<()> {
     // Load .env file (ignore if missing)
     dotenvy::dotenv().ok();
 
-    // Logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,nautilus_okx=warn".parse().unwrap()),
-        )
-        .init();
+    // NOTE: Do NOT init tracing_subscriber here — NautilusTrader's LiveNode
+    // registers its own logger on startup and will panic if one already exists.
 
-    tracing::info!("Sextant Live — OKX Demo Trading");
+    // Use eprintln for pre-node messages since the logger isn't available yet.
+    eprintln!("Sextant Live — OKX Demo Trading");
 
     // ── Configuration ───────────────────────────────────────────
     let trader_id = TraderId::from("SEXTANT-001");
     let account_id = AccountId::from("OKX-DEMO-001");
-    let instrument_id = InstrumentId::from("SOL-USDC-SWAP.OKX");
+    let instrument_id = InstrumentId::from("ETH-USDT-SWAP.OKX");
     let environment = Environment::Live; // LiveNode requires Live; OKX env is Demo
 
     let data_config = OKXDataClientConfig {
@@ -104,10 +100,7 @@ async fn main() -> anyhow::Result<()> {
     let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm);
     node.add_strategy(strategy)?;
 
-    tracing::info!(
-        "Starting live node for {} (OKX Demo)...",
-        instrument_id
-    );
+    eprintln!("Starting live node for {} (OKX Demo)...", instrument_id);
 
     // ── Run ─────────────────────────────────────────────────────
     node.run().await?;

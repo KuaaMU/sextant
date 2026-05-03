@@ -20,7 +20,6 @@ nautilus-agent-swarm = { path = "../agent_swarm" }
 nautilus-state-encoder = { path = "../state_encoder" }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 dotenvy = "0.15"
