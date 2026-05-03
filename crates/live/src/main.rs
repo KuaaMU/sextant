@@ -19,6 +19,7 @@
 //!    cargo run -p sextant-live
 //!    ```
 
+mod mean_reversion_agent;
 mod momentum_agent;
 
 use log::LevelFilter;
@@ -38,6 +39,7 @@ use nautilus_agent_swarm::{
     ConsensusStrategy, PerceptionRouter, RouterConfig, SwarmCoordinator, SwarmStrategy,
 };
 
+use mean_reversion_agent::MeanReversionAgent;
 use momentum_agent::MomentumAgent;
 
 #[tokio::main]
@@ -151,6 +153,12 @@ async fn main() -> anyhow::Result<()> {
         "momentum-01",
         instrument_id,
         0.0005, // 0.05% — BTC moves ~0.1% per 10 ticks on demo
+        0.001,  // 0.001 BTC for demo
+    )));
+    swarm.add_agent(Box::new(MeanReversionAgent::new(
+        "mean-rev-01",
+        instrument_id,
+        1.5,    // 1.5 sigma z-score threshold
         0.001,  // 0.001 BTC for demo
     )));
 
