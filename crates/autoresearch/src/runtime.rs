@@ -66,16 +66,14 @@ impl AutoresearchRuntime {
         self.hypothesis_queue.push_back(hypothesis);
     }
 
-    /// Run one ratchet cycle: evaluate all queued hypotheses.
-    pub fn run_ratchet(&mut self, baseline_returns: &[f64]) {
+    /// Run one ratchet cycle: evaluate all queued hypotheses against price history.
+    pub fn run_ratchet(&mut self, baseline_returns: &[f64], prices: &[f64]) {
         self.baseline_ir = self.metric.evaluate(baseline_returns);
 
         while let Some(hypo) = self.hypothesis_queue.pop_front() {
             info!("Evaluating hypothesis: {}", hypo.id);
 
-            // In real implementation, this would compile and run the code patch.
-            // For now, we accept the hypothesis description as a signal.
-            let candidate_returns = self.simulate_candidate(&hypo);
+            let candidate_returns = self.simulate_candidate(&hypo, prices);
             let candidate_ir = self.metric.evaluate(&candidate_returns);
 
             let accepted =
@@ -110,12 +108,42 @@ impl AutoresearchRuntime {
         }
     }
 
-    /// Simulate candidate strategy returns.
-    /// In production, this would compile the code patch and run against historical data.
-    fn simulate_candidate(&self, _hypo: &StrategyHypothesis) -> Vec<f64> {
-        // Placeholder: return slightly randomized returns
-        // Real implementation would compile hypo.code_patch and run micro-backtest
-        vec![0.01, 0.02, -0.005, 0.015, 0.01]
+    /// Simulate candidate strategy returns from price history.
+    ///
+    /// Parses the hypothesis description for parameter hints (e.g., "window=20")
+    /// and runs a momentum strategy over the provided prices with those parameters.
+    /// Falls back to a simple momentum strategy if no parameters are specified.
+    pub fn simulate_candidate(&self, hypo: &StrategyHypothesis, prices: &[f64]) -> Vec<f64> {
+        if prices.len() < 3 {
+            return vec![];
+        }
+
+        // Parse window size from hypothesis (default: 5)
+        let window = Self::parse_window(&hypo.description).min(prices.len() - 1);
+
+        // Simple momentum strategy: if price > moving average, long; else flat
+        let mut returns = Vec::with_capacity(prices.len() - window);
+        for i in window..prices.len() {
+            let ma: f64 = prices[i - window..i].iter().sum::<f64>() / window as f64;
+            let ret = (prices[i] - prices[i - 1]) / prices[i - 1];
+            // Position: +1 if above MA, 0 otherwise
+            if prices[i] > ma {
+                returns.push(ret);
+            } else {
+                returns.push(0.0);
+            }
+        }
+        returns
+    }
+
+    /// Extract window size from hypothesis description (e.g., "window=20" → 20).
+    fn parse_window(description: &str) -> usize {
+        description
+            .split_whitespace()
+            .find(|w| w.starts_with("window="))
+            .and_then(|w| w.strip_prefix("window="))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5)
     }
 
     /// Get the number of accepted improvements.
@@ -136,20 +164,22 @@ mod tests {
     #[test]
     fn test_ratchet_accept_improvement() {
         let mut runtime = AutoresearchRuntime::new(0.05);
-        runtime.baseline_ir = 1.0;
+
+        // Trending up prices: 100 → 110 over 20 ticks
+        let prices: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 0.5).collect();
+        let baseline_returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
 
         runtime.submit(StrategyHypothesis {
             id: UUID4::new(),
-            description: "Increase momentum window".to_string(),
-            code_patch: "+ window = 20".to_string(),
+            description: "Increase momentum window=10".to_string(),
+            code_patch: "+ window = 10".to_string(),
             parent_id: None,
         });
 
-        // simulate_candidate returns [0.01, 0.02, -0.005, 0.015, 0.01]
-        // which has IR > 1.0 * 1.05
-        let baseline = vec![0.005, 0.01, -0.002, 0.008, 0.005];
-        runtime.run_ratchet(&baseline);
-
+        runtime.run_ratchet(&baseline_returns, &prices);
         assert_eq!(runtime.total_evaluated(), 1);
     }
 
@@ -158,6 +188,10 @@ mod tests {
         let mut runtime = AutoresearchRuntime::new(0.50); // 50% threshold
         runtime.baseline_ir = 10.0; // Very high baseline
 
+        // Flat prices → momentum strategy produces no returns
+        let prices = vec![100.0; 20];
+        let baseline_returns = vec![0.001; 10];
+
         runtime.submit(StrategyHypothesis {
             id: UUID4::new(),
             description: "Bad change".to_string(),
@@ -165,9 +199,31 @@ mod tests {
             parent_id: None,
         });
 
-        let baseline = vec![0.01, 0.02, -0.005, 0.015, 0.01];
-        runtime.run_ratchet(&baseline);
-
+        runtime.run_ratchet(&baseline_returns, &prices);
         assert_eq!(runtime.accepted_count(), 0);
+    }
+
+    #[test]
+    fn test_parse_window() {
+        assert_eq!(AutoresearchRuntime::parse_window("window=20"), 20);
+        assert_eq!(AutoresearchRuntime::parse_window("Increase window=10 bars"), 10);
+        assert_eq!(AutoresearchRuntime::parse_window("no window here"), 5); // default
+    }
+
+    #[test]
+    fn test_simulate_candidate_trending() {
+        let runtime = AutoresearchRuntime::new(0.05);
+        let prices: Vec<f64> = (0..20).map(|i| 100.0 + i as f64).collect();
+        let hypo = StrategyHypothesis {
+            id: UUID4::new(),
+            description: "window=5".to_string(),
+            code_patch: String::new(),
+            parent_id: None,
+        };
+
+        let returns = runtime.simulate_candidate(&hypo, &prices);
+        // In a trending market, momentum strategy should capture positive returns
+        let total: f64 = returns.iter().sum();
+        assert!(total > 0.0, "expected positive returns in uptrend, got {}", total);
     }
 }
