@@ -25,6 +25,9 @@ pub struct MomentumAgent {
     base_size: f64,
     last_momentum: f64,
     position_held: bool,
+    /// Force a trade on next cycle (SEXTANT_FORCE_TRADE=1).
+    force_trade: bool,
+    force_triggered: bool,
 }
 
 impl MomentumAgent {
@@ -34,6 +37,12 @@ impl MomentumAgent {
         threshold: f64,
         base_size: f64,
     ) -> Self {
+        let force = std::env::var("SEXTANT_FORCE_TRADE")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if force {
+            eprintln!("[{}] SEXTANT_FORCE_TRADE=1 — will force a BUY on next cycle", id);
+        }
         Self {
             id: id.to_string(),
             instrument_id,
@@ -41,6 +50,8 @@ impl MomentumAgent {
             base_size,
             last_momentum: 0.0,
             position_held: false,
+            force_trade: force,
+            force_triggered: false,
         }
     }
 
@@ -68,6 +79,35 @@ impl Agent for MomentumAgent {
         let market_state = ctx.market_state_str();
         let momentum = Self::parse_momentum(market_state);
         self.last_momentum = momentum;
+
+        // Debug: force a trade to verify end-to-end pipeline
+        if self.force_trade && !self.force_triggered && !self.position_held {
+            eprintln!(
+                "[{}] FORCE_TRADE — executing debug BUY of {}",
+                self.id, self.base_size
+            );
+            self.force_triggered = true;
+            self.position_held = true;
+            return AgentIntent {
+                id: UUID4::new(),
+                agent_id: self.id.clone(),
+                intent_type: IntentType::TrendFollow,
+                description: "FORCE_TRADE debug signal".into(),
+                target_instrument: self.instrument_id,
+                target_position: Some(PositionTarget {
+                    size: self.base_size,
+                    delta: None,
+                }),
+                risk_budget: RiskBudget {
+                    max_loss: 50.0,
+                    max_position: 20.0,
+                    max_drawdown_bps: 200.0,
+                },
+                constraints: vec![],
+                confidence: 1.0,
+                time_horizon: Duration::from_secs(300),
+            };
+        }
 
         let intent_type = if momentum > self.threshold && !self.position_held {
             info!(
