@@ -54,7 +54,14 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Configuration ───────────────────────────────────────────
     let trader_id = TraderId::from("SEXTANT-001");
-    let instrument_id = InstrumentId::from("BTC-USDT-SWAP.OKX");
+
+    // SEXTANT_INSTRUMENT env var (default: BTC-USDT-SWAP.OKX)
+    // Use DOGE-USDT-SWAP.OKX for cheap architecture testing (~$0.03 margin per order)
+    let instrument_id = InstrumentId::from(
+        std::env::var("SEXTANT_INSTRUMENT")
+            .unwrap_or_else(|_| "BTC-USDT-SWAP.OKX".to_string())
+            .as_str(),
+    );
 
     // OKX environment: OKX_ENVIRONMENT=live|demo (default: demo)
     let okx_env = std::env::var("OKX_ENVIRONMENT").unwrap_or_default();
