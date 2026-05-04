@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use nautilus_agent_swarm::{Agent, AgentFeedback, AgentIntent};
+use nautilus_agent_swarm::{Agent, AgentFeedback, AgentIntent, TradeLimiter};
 use nautilus_core::UUID4;
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_state_encoder::ContextWindow;
@@ -28,9 +28,8 @@ pub struct MomentumAgent {
     /// Force a trade on next cycle (SEXTANT_FORCE_TRADE=1).
     force_trade: bool,
     force_triggered: bool,
-    /// Trade counter — stop after max_trades (0 = unlimited).
-    trade_count: u32,
-    max_trades: u32,
+    /// Trade counter circuit breaker (P0: shared struct).
+    limiter: TradeLimiter,
 }
 
 impl MomentumAgent {
@@ -56,8 +55,7 @@ impl MomentumAgent {
             position_held: false,
             force_trade: force,
             force_triggered: false,
-            trade_count: 0,
-            max_trades,
+            limiter: TradeLimiter::new(id, max_trades),
         }
     }
 
@@ -86,21 +84,14 @@ impl Agent for MomentumAgent {
         let momentum = Self::parse_momentum(market_state);
         self.last_momentum = momentum;
 
-        // Trade limit: stop generating intents after max_trades
-        if self.max_trades > 0 && self.trade_count >= self.max_trades {
-            debug!("[{}] max_trades ({}) reached — HOLD", self.id, self.max_trades);
-            return AgentIntent {
-                id: UUID4::new(),
-                agent_id: self.id.clone(),
-                intent_type: IntentType::Hold,
-                description: format!("max_trades={} reached", self.max_trades),
-                target_instrument: self.instrument_id,
-                target_position: None,
-                risk_budget: RiskBudget { max_loss: 0.0, max_position: 0.0, max_drawdown_bps: 0.0 },
-                constraints: vec![],
-                confidence: 0.0,
-                time_horizon: Duration::from_secs(300),
-            };
+        // === P0: Trade limiter circuit breaker ===
+        if !self.limiter.try_trade() {
+            debug!(
+                "[{}] max_trades ({}) reached — HOLD",
+                self.id,
+                self.limiter.max_trades()
+            );
+            return AgentIntent::hold(&self.id, self.instrument_id);
         }
 
         // Debug: force a trade to verify end-to-end pipeline
@@ -196,14 +187,16 @@ impl Agent for MomentumAgent {
 
     async fn on_feedback(&mut self, feedback: &AgentFeedback) {
         if feedback.success {
-            self.trade_count += 1;
+            self.limiter.record_fill();
             info!(
                 "[{}] Order filled ({}/{}): price={:?} qty={:?} slippage={:?}bps",
-                self.id, self.trade_count, self.max_trades,
+                self.id, self.limiter.trade_count(), self.limiter.max_trades(),
                 feedback.fill_price, feedback.fill_quantity, feedback.slippage_bps
             );
         } else {
-            info!("[{}] Order failed: {:?}", self.id, feedback.error);
+            // Order failed — reset position state so we can re-enter
+            self.position_held = false;
+            info!("[{}] Order failed: {:?} — resetting position state", self.id, feedback.error);
         }
     }
 

@@ -119,6 +119,19 @@ impl ContextWindow {
     pub fn event_count(&self) -> u32 {
         self.event_trace_len.min(64)
     }
+
+    /// Returns `true` if the context is older than `max_age_ns` nanoseconds.
+    // === P0: Single staleness check, P1: Per-field TTLs ===
+    pub fn is_stale(&self, max_age_ns: u64) -> bool {
+        if self.timestamp_ns == 0 {
+            return true; // never updated
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        now.saturating_sub(self.timestamp_ns) > max_age_ns
+    }
 }
 
 impl fmt::Debug for ContextWindow {

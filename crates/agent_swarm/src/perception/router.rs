@@ -4,8 +4,13 @@
 //! Layer 2 (Small LLM): Fast inference for tactical decisions.
 //! Layer 3 (Large LLM): Deep inference for strategic analysis.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use nautilus_state_encoder::ContextWindow;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::intent::{AgentIntent, IntentType, PositionTarget, RiskBudget};
 use super::llm::{LlmAction, LlmBackend, LlmDecision};
@@ -78,11 +83,42 @@ impl Default for RouterConfig {
     }
 }
 
+/// Simple TTL cache for LLM responses.
+// === P0: Hash of market_state[:200], P1: MarketStateKey with semantic features ===
+struct LlmCache {
+    entries: std::collections::HashMap<u64, (Instant, PerceptionDecision)>,
+    ttl: Duration,
+}
+
+impl LlmCache {
+    fn new(ttl_secs: u64) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            ttl: Duration::from_secs(ttl_secs),
+        }
+    }
+
+    fn get(&self, key: u64) -> Option<PerceptionDecision> {
+        self.entries.get(&key)
+            .filter(|(t, _)| t.elapsed() < self.ttl)
+            .map(|(_, d)| d.clone())
+    }
+
+    fn insert(&mut self, key: u64, decision: PerceptionDecision) {
+        // Evict expired entries periodically
+        if self.entries.len() > 100 {
+            self.entries.retain(|_, (t, _)| t.elapsed() < self.ttl);
+        }
+        self.entries.insert(key, (Instant::now(), decision));
+    }
+}
+
 /// Three-layer perception router.
 pub struct PerceptionRouter {
     config: RouterConfig,
     small_llm: Option<Box<dyn LlmBackend>>,
     large_llm: Option<Box<dyn LlmBackend>>,
+    cache: Mutex<LlmCache>,
 }
 
 impl PerceptionRouter {
@@ -91,6 +127,7 @@ impl PerceptionRouter {
             config,
             small_llm: None,
             large_llm: None,
+            cache: Mutex::new(LlmCache::new(60)),
         }
     }
 
@@ -120,37 +157,60 @@ impl PerceptionRouter {
             return l1;
         }
 
-        // Layer 2: Small LLM
+        // === P0: Check LLM cache before calling L2/L3 ===
+        let cache_key = Self::cache_key(ctx);
+        if let Ok(cache) = self.cache.lock() {
+            if let Some(cached) = cache.get(cache_key) {
+                debug!("LLM cache hit — returning cached {:?} (confidence {:.2})", cached.intent_type, cached.confidence);
+                return cached;
+            }
+        }
+
+        // Layer 2: Small LLM (5s timeout)
         if let Some(ref llm) = self.small_llm {
-            match llm.perceive(ctx).await {
-                Ok(decision) => {
+            match tokio::time::timeout(Duration::from_secs(5), llm.perceive(ctx)).await {
+                Ok(Ok(decision)) => {
                     let l2 = self.llm_to_perception(decision, RoutingLayer::SmallLlm);
                     debug!(
                         "L2 decision: {:?} confidence={:.2} — {}",
                         l2.intent_type, l2.confidence, l2.reasoning
                     );
+                    // Cache the result
+                    if let Ok(mut cache) = self.cache.lock() {
+                        cache.insert(cache_key, l2.clone());
+                    }
                     if l2.confidence >= self.config.l2_threshold {
                         info!("L2 resolved: {:?} (confidence {:.2})", l2.intent_type, l2.confidence);
                         return l2;
                     }
                     // Fall through to L3
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     debug!("L2 inference failed: {}, falling through to L3", e);
+                }
+                Err(_) => {
+                    warn!("L2 LLM timeout (5s) — falling back to L3");
                 }
             }
         }
 
-        // Layer 3: Large LLM
+        // Layer 3: Large LLM (15s timeout)
         if let Some(ref llm) = self.large_llm {
-            match llm.perceive(ctx).await {
-                Ok(decision) => {
+            match tokio::time::timeout(Duration::from_secs(15), llm.perceive(ctx)).await {
+                Ok(Ok(decision)) => {
                     let l3 = self.llm_to_perception(decision, RoutingLayer::LargeLlm);
                     info!("L3 resolved: {:?} (confidence {:.2})", l3.intent_type, l3.confidence);
+                    // Cache the result
+                    if let Ok(mut cache) = self.cache.lock() {
+                        cache.insert(cache_key, l3.clone());
+                    }
                     return l3;
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     debug!("L3 inference failed: {}, using L1 fallback", e);
+                }
+                Err(_) => {
+                    warn!("L3 LLM timeout (15s) — using L1 fallback");
                 }
             }
         }
@@ -158,6 +218,15 @@ impl PerceptionRouter {
         // All LLM layers failed or unavailable — return L1 decision regardless
         info!("No LLM available, using L1 fallback: {:?}", l1.intent_type);
         l1
+    }
+
+    /// Compute cache key from market state (first 200 bytes, with bounds check).
+    fn cache_key(ctx: &ContextWindow) -> u64 {
+        let state = ctx.market_state;
+        let len = (ctx.market_state_len as usize).min(state.len()).min(200);
+        let mut hasher = DefaultHasher::new();
+        state[..len].hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Layer 1: Rule-based pattern matching on ContextWindow fields.

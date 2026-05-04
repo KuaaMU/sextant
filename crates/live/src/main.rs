@@ -84,10 +84,16 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(if okx_environment == OKXEnvironment::Live { 1 } else { 0 });
 
-    eprintln!("Environment: {} | base_size: {} contracts | max_trades: {}",
+    let cooldown_secs: u64 = std::env::var("SEXTANT_COOLDOWN_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
+    eprintln!("Environment: {} | base_size: {} contracts | max_trades: {} | cooldown: {}s",
         if okx_environment == OKXEnvironment::Live { "LIVE" } else { "DEMO" },
         base_size,
         if max_trades == 0 { "unlimited".to_string() } else { max_trades.to_string() },
+        cooldown_secs,
     );
 
     // Load OKX credentials from environment (.env file)
@@ -193,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
         instrument_id,
         1.5,    // 1.5 sigma z-score threshold
         base_size,
+        max_trades,
     )));
 
     let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm);

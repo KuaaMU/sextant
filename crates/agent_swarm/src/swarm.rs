@@ -3,7 +3,7 @@
 use nautilus_state_encoder::ContextWindow;
 use tracing::{debug, info};
 
-use crate::agent::Agent;
+use crate::agent::{Agent, AgentFeedback};
 use crate::compiler::IntentCompiler;
 use crate::intent::{AgentIntent, ExecutionDirective, IntentType};
 use crate::perception::router::PerceptionRouter;
@@ -61,6 +61,13 @@ impl SwarmCoordinator {
     /// If a router is attached, it runs first as a baseline perception layer.
     /// Agents then refine or override the router's decision.
     pub async fn run_cycle(&mut self, ctx: &ContextWindow) -> Vec<ExecutionDirective> {
+        // === P0: Staleness guard — skip cycle if data is too old ===
+        // 5 seconds = 5_000_000_000 nanoseconds
+        if ctx.is_stale(5_000_000_000) {
+            debug!("ContextWindow stale (>5s) — skipping swarm cycle");
+            return vec![];
+        }
+
         // 1. Router baseline (if attached)
         let mut intents = Vec::new();
         if let Some(ref router) = self.router {
@@ -94,7 +101,15 @@ impl SwarmCoordinator {
         // 3. Compile to execution directives
         resolved
             .into_iter()
-            .map(|intent| IntentCompiler::compile(&intent, ctx))
+            .filter_map(|intent| {
+                match IntentCompiler::compile(&intent, ctx) {
+                    Ok(directive) => Some(directive),
+                    Err(e) => {
+                        debug!("IntentCompiler rejected intent from '{}': {}", intent.agent_id, e);
+                        None
+                    }
+                }
+            })
             .collect()
     }
 
@@ -102,25 +117,43 @@ impl SwarmCoordinator {
     fn resolve_conflicts(&self, intents: Vec<AgentIntent>) -> Vec<AgentIntent> {
         match &self.consensus {
             ConsensusStrategy::Pipeline => {
-                // In pipeline mode, later agents can override earlier ones
-                // but Hold always yields
-                let mut result: Vec<AgentIntent> = Vec::new();
+                // === P0: Pick highest-confidence non-Hold intent ===
+                // TODO(P1): Use ConsensusEngine trait with normalized confidence
                 let mut first_intent: Option<AgentIntent> = None;
-                for intent in intents {
-                    if first_intent.is_none() {
-                        first_intent = Some(intent.clone());
+                let non_hold: Vec<AgentIntent> = intents
+                    .into_iter()
+                    .filter_map(|intent| {
+                        if first_intent.is_none() {
+                            first_intent = Some(intent.clone());
+                        }
+                        if intent.intent_type != IntentType::Hold {
+                            Some(intent)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                match non_hold.len() {
+                    0 => {
+                        // All agents said hold — return first intent as-is
+                        first_intent.into_iter().collect()
                     }
-                    if intent.intent_type != IntentType::Hold {
-                        result.push(intent);
+                    1 => non_hold,
+                    _ => {
+                        // Multiple non-Hold — pick highest confidence (NaN-safe)
+                        let best = non_hold
+                            .into_iter()
+                            .max_by(|a, b| {
+                                // NaN treated as lowest confidence
+                                let ca = if a.confidence.is_nan() { -1.0 } else { a.confidence };
+                                let cb = if b.confidence.is_nan() { -1.0 } else { b.confidence };
+                                ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .unwrap();
+                        vec![best]
                     }
                 }
-                if result.is_empty() {
-                    // All agents said hold
-                    if let Some(first) = first_intent {
-                        result.push(first);
-                    }
-                }
-                result
             }
             ConsensusStrategy::Hierarchical { priority } => {
                 // Group by instrument, pick highest-priority non-Hold intent
@@ -187,6 +220,13 @@ impl SwarmCoordinator {
         }
     }
 
+    /// Forward order fill feedback to all agents.
+    pub async fn on_order_filled(&mut self, feedback: &AgentFeedback) {
+        for agent in &mut self.agents {
+            agent.on_feedback(feedback).await;
+        }
+    }
+
     /// Get the number of registered agents.
     pub fn agent_count(&self) -> usize {
         self.agents.len()
@@ -242,6 +282,16 @@ mod tests {
         }
     }
 
+    /// Create a non-stale ContextWindow for tests.
+    fn fresh_ctx() -> ContextWindow {
+        let mut ctx = ContextWindow::zeroed();
+        ctx.timestamp_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        ctx
+    }
+
     #[tokio::test]
     async fn test_swarm_pipeline() {
         let mut swarm = SwarmCoordinator::new(ConsensusStrategy::Pipeline);
@@ -256,7 +306,7 @@ mod tests {
             confidence: 0.9,
         }));
 
-        let ctx = ContextWindow::zeroed();
+        let ctx = fresh_ctx();
         let directives = swarm.run_cycle(&ctx).await;
         assert!(!directives.is_empty());
     }
@@ -275,7 +325,7 @@ mod tests {
             confidence: 0.9,
         }));
 
-        let ctx = ContextWindow::zeroed();
+        let ctx = fresh_ctx();
         let directives = swarm.run_cycle(&ctx).await;
         // High confidence agent should win
         assert_eq!(directives.len(), 1);

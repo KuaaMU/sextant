@@ -6,6 +6,7 @@
 //! SwarmCoordinator to produce execution directives.
 
 use std::fmt::Debug;
+use std::time::Instant;
 
 use nautilus_common::actor::DataActor;
 use nautilus_model::{
@@ -22,6 +23,7 @@ use nautilus_trading::{
 };
 use tracing::{debug, info, warn};
 
+use crate::agent::AgentFeedback;
 use crate::intent::{ExecutionDirective, OrderSide, TimeInForce};
 use crate::swarm::SwarmCoordinator;
 use nautilus_reputation::AutonomySlider;
@@ -48,6 +50,10 @@ pub struct SwarmStrategy {
     sl_pct: f64,
     /// Client order ID of the active stop-loss order, if any.
     active_sl_order_id: Option<ClientOrderId>,
+    /// Minimum seconds between swarm cycles (cooldown).
+    cooldown_secs: u64,
+    /// Timestamp of last swarm cycle.
+    last_cycle_time: Option<Instant>,
 }
 
 impl SwarmStrategy {
@@ -78,6 +84,13 @@ impl SwarmStrategy {
             eprintln!("Stop-loss enabled: {:.1}%", sl_pct * 100.0);
         }
 
+        // Cooldown: SEXTANT_COOLDOWN_SECS env var (default 30s).
+        let cooldown_secs: u64 = std::env::var("SEXTANT_COOLDOWN_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        eprintln!("Cooldown: {}s between cycles", cooldown_secs);
+
         // ContextWindow stores symbol only (e.g. "BTC-USDT"), venue is added by SwarmCoordinator
         let symbol = instrument_id.symbol.as_str().to_string();
         Self {
@@ -92,6 +105,8 @@ impl SwarmStrategy {
             win_count: 0,
             sl_pct,
             active_sl_order_id: None,
+            cooldown_secs,
+            last_cycle_time: None,
         }
     }
 
@@ -268,6 +283,21 @@ impl DataActor for SwarmStrategy {
             self.active_sl_order_id = None;
         }
 
+        // Forward feedback to swarm agents (trade_count, etc.)
+        let feedback = AgentFeedback {
+            intent_id: nautilus_core::UUID4::new(), // not tied to a specific intent
+            success: true,
+            fill_price: Some(price),
+            fill_quantity: Some(qty),
+            slippage_bps: None,
+            error: None,
+        };
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.swarm.on_order_filled(&feedback).await;
+            })
+        });
+
         // Update StateEncoder with new position
         self.encoder
             .update_position(self.position_size, self.entry_price, unrealized_pnl);
@@ -304,19 +334,42 @@ impl DataActor for SwarmStrategy {
         // 1. Feed quote into StateEncoder → ContextWindow → SharedStateBuffer
         self.encoder.on_quote(quote);
 
-        // 2. Read current context and run swarm cycle
+        // 2. Cooldown check — skip swarm cycle if too soon
+        let now = Instant::now();
+        if let Some(last) = self.last_cycle_time {
+            let elapsed = now.duration_since(last).as_secs();
+            if elapsed < self.cooldown_secs {
+                debug!(
+                    "Cooldown: {}s elapsed, need {}s — skipping cycle",
+                    elapsed, self.cooldown_secs
+                );
+                return Ok(());
+            }
+        }
+        self.last_cycle_time = Some(now);
+
+        // 3. Read current context and run swarm cycle
+        // === P0: Cycle timeout to prevent hangs ===
+        // TODO(P1): Per-agent isolation via AgentSandbox (catch_unwind + resource quotas)
         let ctx = self.encoder.current_context();
-        // Note: run_cycle is async, but on_quote is sync.
-        // Use block_in_place to safely block within the tokio runtime.
         let directives = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                self.swarm.run_cycle(ctx).await
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    self.swarm.run_cycle(ctx),
+                ).await {
+                    Ok(directives) => directives,
+                    Err(_) => {
+                        tracing::error!("Swarm cycle timeout (30s) — skipping cycle");
+                        vec![]
+                    }
+                }
             })
         });
 
         debug!("Swarm cycle produced {} directives", directives.len());
 
-        // 3. Execute resulting directives
+        // 4. Execute resulting directives
         if !directives.is_empty() {
             debug!("Swarm produced {} directives", directives.len());
             self.execute_directives(directives);

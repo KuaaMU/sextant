@@ -9,10 +9,12 @@ pub mod intent;
 pub mod perception;
 pub mod strategy_wrapper;
 pub mod swarm;
+pub mod trade_limiter;
 
 // Re-export core types
 pub use agent::{Agent, AgentFeedback};
-pub use compiler::IntentCompiler;
+pub use trade_limiter::TradeLimiter;
+pub use compiler::{CompileError, IntentCompiler};
 pub use intent::{AgentIntent, ExecutionDirective, ExecutionStyle, IntentType, OrderSide, OrderSpecification, PositionTarget, RiskBudget};
 pub use perception::{LlmAction, LlmBackend, LlmConfig, LlmConfigFile, LlmDecision, ModelConfig, MockLlm, PerceptionDecision, PerceptionRouter, PromptTemplate, ProviderConfig, RemoteLlm, RemoteLlmConfig, RoleMapping, RouterConfig, RoutingLayer};
 pub use strategy_wrapper::SwarmStrategy;

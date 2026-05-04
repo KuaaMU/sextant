@@ -10,8 +10,32 @@ use crate::intent::{
     TimeInForce,
 };
 
+/// Errors during intent compilation.
+// === P0: Basic error enum, P1: ValidationRule chain ===
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CompileError {
+    /// Instrument ID missing venue suffix (e.g., ".OKX").
+    InvalidInstrument,
+    /// Quantity is non-finite, negative, or zero.
+    InvalidQuantity,
+    /// Could not parse a valid mid price from market state.
+    InvalidPrice,
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInstrument => write!(f, "invalid instrument ID (missing venue suffix)"),
+            Self::InvalidQuantity => write!(f, "invalid quantity (non-finite, negative, or zero)"),
+            Self::InvalidPrice => write!(f, "invalid price (could not parse mid from market state)"),
+        }
+    }
+}
+
+impl std::error::Error for CompileError {}
+
 /// Pre-defined execution templates.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionTemplate {
     DeltaHedgeTwap,
     GammaScalpIoc,
@@ -40,16 +64,35 @@ pub struct IntentCompiler;
 
 impl IntentCompiler {
     /// Compile an agent intent into an execution directive.
-    pub fn compile(intent: &AgentIntent, ctx: &ContextWindow) -> ExecutionDirective {
+    pub fn compile(intent: &AgentIntent, ctx: &ContextWindow) -> Result<ExecutionDirective, CompileError> {
+        // === P0: Basic validation, P1: ValidationRule chain ===
         let template = ExecutionTemplate::from_intent(intent);
 
+        // Hold intents skip validation (no orders to place)
+        if template == ExecutionTemplate::Hold {
+            return Ok(Self::compile_hold(intent));
+        }
+
+        // Validate instrument has venue suffix
+        let inst_str = intent.target_instrument.to_string();
+        if !inst_str.contains('.') {
+            return Err(CompileError::InvalidInstrument);
+        }
+
+        // Validate target position quantity (if present)
+        if let Some(ref target) = intent.target_position {
+            if !target.size.is_finite() || target.size.abs() < 1e-12 {
+                return Err(CompileError::InvalidQuantity);
+            }
+        }
+
         match template {
-            ExecutionTemplate::Hold => Self::compile_hold(intent),
+            ExecutionTemplate::Hold => unreachable!(),
             ExecutionTemplate::DeltaHedgeTwap => Self::compile_delta_hedge(intent, ctx),
-            ExecutionTemplate::GammaScalpIoc => Self::compile_gamma_scalp(intent),
-            ExecutionTemplate::TrendFollowTrailing => Self::compile_trend_follow(intent),
+            ExecutionTemplate::GammaScalpIoc => Ok(Self::compile_gamma_scalp(intent)),
+            ExecutionTemplate::TrendFollowTrailing => Ok(Self::compile_trend_follow(intent)),
             ExecutionTemplate::MeanRevertLimit => Self::compile_mean_revert(intent, ctx),
-            ExecutionTemplate::LiquidationCaptureIoc => Self::compile_liquidation(intent),
+            ExecutionTemplate::LiquidationCaptureIoc => Ok(Self::compile_liquidation(intent)),
         }
     }
 
@@ -63,7 +106,7 @@ impl IntentCompiler {
         }
     }
 
-    fn compile_delta_hedge(intent: &AgentIntent, ctx: &ContextWindow) -> ExecutionDirective {
+    fn compile_delta_hedge(intent: &AgentIntent, ctx: &ContextWindow) -> Result<ExecutionDirective, CompileError> {
         let target = intent.target_position.unwrap_or(crate::intent::PositionTarget {
             size: 0.0,
             delta: None,
@@ -71,7 +114,7 @@ impl IntentCompiler {
         let delta = target.size - ctx.position_size;
 
         if delta.abs() < 1e-8 {
-            return Self::compile_hold(intent);
+            return Ok(Self::compile_hold(intent));
         }
 
         let side = if delta > 0.0 {
@@ -84,7 +127,7 @@ impl IntentCompiler {
         let slices = Self::optimal_slices(delta.abs(), intent.time_horizon);
         let interval = intent.time_horizon / slices;
 
-        ExecutionDirective {
+        Ok(ExecutionDirective {
             intent_id: intent.id,
             orders: vec![OrderSpecification {
                 instrument_id: intent.target_instrument,
@@ -106,7 +149,7 @@ impl IntentCompiler {
                     }
                 })
                 .unwrap_or(50.0),
-        }
+        })
     }
 
     fn compile_gamma_scalp(intent: &AgentIntent) -> ExecutionDirective {
@@ -161,9 +204,9 @@ impl IntentCompiler {
         }
     }
 
-    fn compile_mean_revert(intent: &AgentIntent, ctx: &ContextWindow) -> ExecutionDirective {
-        // Parse mid price from market state
-        let mid = Self::parse_mid_price(ctx);
+    fn compile_mean_revert(intent: &AgentIntent, ctx: &ContextWindow) -> Result<ExecutionDirective, CompileError> {
+        // Parse mid price from market state — fail if unparseable
+        let mid = Self::parse_mid_price(ctx)?;
         let target = intent.target_position.unwrap_or(crate::intent::PositionTarget {
             size: 0.0,
             delta: None,
@@ -174,7 +217,7 @@ impl IntentCompiler {
             OrderSide::Sell
         };
 
-        ExecutionDirective {
+        Ok(ExecutionDirective {
             intent_id: intent.id,
             orders: vec![OrderSpecification {
                 instrument_id: intent.target_instrument,
@@ -189,7 +232,7 @@ impl IntentCompiler {
             },
             time_horizon: intent.time_horizon,
             max_slippage_bps: 10.0,
-        }
+        })
     }
 
     fn compile_liquidation(intent: &AgentIntent) -> ExecutionDirective {
@@ -225,9 +268,8 @@ impl IntentCompiler {
     }
 
     /// Parse mid price from market state text.
-    fn parse_mid_price(ctx: &ContextWindow) -> f64 {
+    fn parse_mid_price(ctx: &ContextWindow) -> Result<f64, CompileError> {
         let state = ctx.market_state_str();
-        // Try to extract bid and ask from "bid:XXX | ask:XXX"
         let bid = state
             .find("bid:")
             .and_then(|i| state[i + 4..].split(' ').next())
@@ -238,8 +280,8 @@ impl IntentCompiler {
             .and_then(|s| s.parse::<f64>().ok());
 
         match (bid, ask) {
-            (Some(b), Some(a)) => (b + a) / 2.0,
-            _ => 0.0,
+            (Some(b), Some(a)) if b > 0.0 && a > 0.0 => Ok((b + a) / 2.0),
+            _ => Err(CompileError::InvalidPrice),
         }
     }
 }
@@ -278,7 +320,7 @@ mod tests {
     fn test_hold_compilation() {
         let intent = make_intent(IntentType::Hold);
         let ctx = ContextWindow::zeroed();
-        let directive = IntentCompiler::compile(&intent, &ctx);
+        let directive = IntentCompiler::compile(&intent, &ctx).unwrap();
         assert!(directive.orders.is_empty());
     }
 
@@ -289,7 +331,7 @@ mod tests {
         ctx.position_size = 5.0;
         ctx.set_market_state("OrderBook bid:150.0 | ask:150.1");
 
-        let directive = IntentCompiler::compile(&intent, &ctx);
+        let directive = IntentCompiler::compile(&intent, &ctx).unwrap();
         assert_eq!(directive.orders.len(), 1);
         assert_eq!(directive.orders[0].quantity, 5.0); // 10 - 5 = 5
         assert_eq!(directive.orders[0].side, OrderSide::Buy);

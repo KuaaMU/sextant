@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use nautilus_agent_swarm::intent::{IntentType, PositionTarget, RiskBudget};
-use nautilus_agent_swarm::{Agent, AgentFeedback, AgentIntent};
+use nautilus_agent_swarm::{Agent, AgentFeedback, AgentIntent, TradeLimiter};
 use nautilus_core::UUID4;
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_state_encoder::ContextWindow;
@@ -26,6 +26,8 @@ pub struct MeanReversionAgent {
     base_size: f64,
     last_z: f64,
     position_held: bool,
+    /// Trade counter circuit breaker (P0: shared struct).
+    limiter: TradeLimiter,
 }
 
 impl MeanReversionAgent {
@@ -34,6 +36,7 @@ impl MeanReversionAgent {
         instrument_id: InstrumentId,
         z_threshold: f64,
         base_size: f64,
+        max_trades: u32,
     ) -> Self {
         Self {
             id: id.to_string(),
@@ -42,6 +45,7 @@ impl MeanReversionAgent {
             base_size,
             last_z: 0.0,
             position_held: false,
+            limiter: TradeLimiter::new(id, max_trades),
         }
     }
 
@@ -101,6 +105,16 @@ impl Agent for MeanReversionAgent {
     async fn perceive(&mut self, ctx: &ContextWindow) -> AgentIntent {
         let z = Self::compute_z_score(ctx);
         self.last_z = z;
+
+        // === P0: Trade limiter circuit breaker ===
+        if !self.limiter.try_trade() {
+            debug!(
+                "[{}] max_trades ({}) reached — HOLD",
+                self.id,
+                self.limiter.max_trades()
+            );
+            return self.hold_intent();
+        }
 
         let spread_bps = Self::parse_spread_bps(ctx.market_state_str());
 
@@ -180,12 +194,16 @@ impl Agent for MeanReversionAgent {
 
     async fn on_feedback(&mut self, feedback: &AgentFeedback) {
         if feedback.success {
+            self.limiter.record_fill();
             info!(
-                "[{}] Reversion trade filled: price={:?} qty={:?}",
-                self.id, feedback.fill_price, feedback.fill_quantity
+                "[{}] Reversion trade filled: price={:?} qty={:?} ({}/{})",
+                self.id, feedback.fill_price, feedback.fill_quantity,
+                self.limiter.trade_count(), self.limiter.max_trades()
             );
         } else {
-            info!("[{}] Trade failed: {:?}", self.id, feedback.error);
+            // Reset position state on failure so we can re-enter
+            self.position_held = false;
+            info!("[{}] Trade failed: {:?} — resetting position state", self.id, feedback.error);
         }
     }
 

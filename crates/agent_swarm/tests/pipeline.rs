@@ -13,6 +13,11 @@ fn make_market_ctx(market: &str) -> ContextWindow {
     let mut ctx = ContextWindow::zeroed();
     ctx.set_instrument_id("BTC-USDT");
     ctx.set_market_state(market);
+    // Set a fresh timestamp so staleness guard doesn't skip the cycle
+    ctx.timestamp_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
     ctx
 }
 
