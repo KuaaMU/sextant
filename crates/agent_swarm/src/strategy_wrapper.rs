@@ -54,6 +54,8 @@ pub struct SwarmStrategy {
     cooldown_secs: u64,
     /// Timestamp of last swarm cycle.
     last_cycle_time: Option<Instant>,
+    /// Dry-run mode: log orders without submitting (SEXTANT_DRY_RUN=1).
+    dry_run: bool,
 }
 
 impl SwarmStrategy {
@@ -91,6 +93,14 @@ impl SwarmStrategy {
             .unwrap_or(30);
         eprintln!("Cooldown: {}s between cycles", cooldown_secs);
 
+        // Dry-run: SEXTANT_DRY_RUN=1 logs orders without submitting.
+        let dry_run = std::env::var("SEXTANT_DRY_RUN")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+        if dry_run {
+            eprintln!("DRY RUN MODE — orders will be logged but NOT submitted");
+        }
+
         // ContextWindow stores symbol only (e.g. "BTC-USDT"), venue is added by SwarmCoordinator
         let symbol = instrument_id.symbol.as_str().to_string();
         Self {
@@ -107,12 +117,28 @@ impl SwarmStrategy {
             active_sl_order_id: None,
             cooldown_secs,
             last_cycle_time: None,
+            dry_run,
         }
     }
 
     /// Convert a Sextant ExecutionDirective into Nautilus orders and submit them.
     fn execute_directives(&mut self, directives: Vec<ExecutionDirective>) {
-        for directive in directives {
+        for directive in &directives {
+            // === DRY RUN: Log orders without submitting ===
+            if self.dry_run {
+                for order_spec in &directive.orders {
+                    info!(
+                        "[DRY RUN] Would execute: {:?} {} qty={} instrument={} tif={:?}",
+                        order_spec.side,
+                        order_spec.quantity,
+                        order_spec.quantity,
+                        order_spec.instrument_id,
+                        order_spec.time_in_force,
+                    );
+                }
+                continue;
+            }
+
             debug!(
                 "Executing directive for intent {:?}: {} orders, style={:?}",
                 directive.intent_id,
