@@ -10,13 +10,9 @@ nautilus-core = { workspace = true }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }
-ethers = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 sha3 = { workspace = true }
-uuid = { workspace = true }
 tracing = { workspace = true }
-ustr = { workspace = true }
 
 [features]
 default = []

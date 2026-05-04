@@ -1,4 +1,8 @@
 //! Sextant TUI — terminal dashboard for the trading engine.
+//!
+//! Legacy binary — GUI crate (sextant-gui) is the primary UI.
+
+#![allow(dead_code)]
 
 mod app;
 mod data;
