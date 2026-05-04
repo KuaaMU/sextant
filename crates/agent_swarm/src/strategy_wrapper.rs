@@ -10,10 +10,10 @@ use std::fmt::Debug;
 use nautilus_common::actor::DataActor;
 use nautilus_model::{
     data::QuoteTick,
-    enums::{OrderSide as NautilusOrderSide, TimeInForce as NautilusTif},
+    enums::{OrderSide as NautilusOrderSide, TimeInForce as NautilusTif, TriggerType},
     events::order::filled::OrderFilled,
-    identifiers::InstrumentId,
-    types::Quantity,
+    identifiers::{ClientOrderId, InstrumentId},
+    types::{Price, Quantity},
 };
 use nautilus_state_encoder::StateEncoder;
 use nautilus_trading::{
@@ -44,6 +44,10 @@ pub struct SwarmStrategy {
     trade_count: u32,
     /// Running win count for reputation scoring.
     win_count: u32,
+    /// Stop-loss percentage (e.g. 0.02 = 2%). 0 disables SL.
+    sl_pct: f64,
+    /// Client order ID of the active stop-loss order, if any.
+    active_sl_order_id: Option<ClientOrderId>,
 }
 
 impl SwarmStrategy {
@@ -65,6 +69,15 @@ impl SwarmStrategy {
             swarm.agent_count()
         );
 
+        // Stop-loss: SEXTANT_SL_PCT env var (default 0.02 = 2%). 0 disables.
+        let sl_pct: f64 = std::env::var("SEXTANT_SL_PCT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.02);
+        if sl_pct > 0.0 {
+            eprintln!("Stop-loss enabled: {:.1}%", sl_pct * 100.0);
+        }
+
         // ContextWindow stores symbol only (e.g. "BTC-USDT"), venue is added by SwarmCoordinator
         let symbol = instrument_id.symbol.as_str().to_string();
         Self {
@@ -77,6 +90,8 @@ impl SwarmStrategy {
             autonomy: AutonomySlider::new(5), // 5 trades before level changes
             trade_count: 0,
             win_count: 0,
+            sl_pct,
+            active_sl_order_id: None,
         }
     }
 
@@ -197,6 +212,61 @@ impl DataActor for SwarmStrategy {
             "Order filled: {} {} @ {:.2} → position={:.6} entry={:.2} pnl={:.2}",
             event.order_side, qty, price, self.position_size, self.entry_price, unrealized_pnl
         );
+
+        // ── Stop-loss management ──────────────────────────────────
+        if new_size.abs() > 1e-12 && old_size.abs() < 1e-12 && self.sl_pct > 0.0 {
+            // New position opened — submit stop-loss order
+            let sl_side = if new_size > 0.0 {
+                NautilusOrderSide::Sell
+            } else {
+                NautilusOrderSide::Buy
+            };
+            let sl_trigger_price = if new_size > 0.0 {
+                self.entry_price * (1.0 - self.sl_pct)
+            } else {
+                self.entry_price * (1.0 + self.sl_pct)
+            };
+            let sl_qty = Quantity::new(new_size.abs(), 8);
+            let sl_price = Price::new(sl_trigger_price, 8);
+            let sl_cl_ord_id = ClientOrderId::new(
+                format!("SL-{}", event.client_order_id).as_str(),
+            );
+
+            info!(
+                "Submitting SL: side={:?} trigger={:.8} qty={:.8} ({}% from entry {:.8})",
+                sl_side, sl_trigger_price, new_size.abs(), self.sl_pct * 100.0, self.entry_price
+            );
+
+            let sl_order = self.core.order_factory().stop_market(
+                self.instrument_id,
+                sl_side,
+                sl_qty,
+                sl_price,
+                Some(TriggerType::LastPrice), // trigger on last traded price
+                Some(NautilusTif::Gtc),
+                None,    // expire_time
+                Some(true), // reduce_only
+                None,    // quote_quantity
+                None,    // display_qty
+                None,    // emulation_trigger
+                None,    // trigger_instrument_id
+                None,    // exec_algorithm_id
+                None,    // exec_algorithm_params
+                None,    // tags
+                Some(sl_cl_ord_id.clone()),
+            );
+
+            if let Err(e) = self.submit_order(sl_order, None, None) {
+                warn!("Failed to submit SL order: {}", e);
+            } else {
+                self.active_sl_order_id = Some(sl_cl_ord_id);
+            }
+        } else if new_size.abs() < 1e-12 && old_size.abs() > 1e-12 {
+            // Position closed — clear SL tracking
+            // The SL order should auto-cancel (reduce_only + no position),
+            // but clear our tracking regardless.
+            self.active_sl_order_id = None;
+        }
 
         // Update StateEncoder with new position
         self.encoder
