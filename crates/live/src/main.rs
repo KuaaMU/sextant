@@ -54,9 +54,34 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Configuration ───────────────────────────────────────────
     let trader_id = TraderId::from("SEXTANT-001");
-    let account_id = AccountId::from("OKX-DEMO-001");
-    let instrument_id = InstrumentId::from("BTC-USDT.OKX");
-    let environment = Environment::Live;
+    let instrument_id = InstrumentId::from("BTC-USDT-SWAP.OKX");
+
+    // OKX environment: OKX_ENVIRONMENT=live|demo (default: demo)
+    let okx_env = std::env::var("OKX_ENVIRONMENT").unwrap_or_default();
+    let (environment, okx_environment, account_label) = if okx_env == "live" {
+        (Environment::Live, OKXEnvironment::Live, "OKX-LIVE")
+    } else {
+        (Environment::Live, OKXEnvironment::Demo, "OKX-DEMO")
+    };
+    let account_id = AccountId::from(account_label);
+
+    // Order size: SEXTANT_BASE_SIZE (default: 1 contract = 0.01 BTC for swap)
+    let base_size: f64 = std::env::var("SEXTANT_BASE_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+
+    // Max trades: SEXTANT_MAX_TRADES (default: 1 for live, unlimited for demo)
+    let max_trades: u32 = std::env::var("SEXTANT_MAX_TRADES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(if okx_environment == OKXEnvironment::Live { 1 } else { 0 });
+
+    eprintln!("Environment: {} | base_size: {} contracts | max_trades: {}",
+        if okx_environment == OKXEnvironment::Live { "LIVE" } else { "DEMO" },
+        base_size,
+        if max_trades == 0 { "unlimited".to_string() } else { max_trades.to_string() },
+    );
 
     // Load OKX credentials from environment (.env file)
     let okx_api_key = std::env::var("OKX_API_KEY").ok();
@@ -67,8 +92,8 @@ async fn main() -> anyhow::Result<()> {
         api_key: okx_api_key.clone(),
         api_secret: okx_api_secret.clone(),
         api_passphrase: okx_passphrase.clone(),
-        instrument_types: vec![OKXInstrumentType::Spot],
-        environment: OKXEnvironment::Demo,
+        instrument_types: vec![OKXInstrumentType::Swap],
+        environment: okx_environment,
         ..Default::default()
     };
 
@@ -78,8 +103,8 @@ async fn main() -> anyhow::Result<()> {
         api_key: okx_api_key,
         api_secret: okx_api_secret,
         api_passphrase: okx_passphrase,
-        instrument_types: vec![OKXInstrumentType::Spot],
-        environment: OKXEnvironment::Demo,
+        instrument_types: vec![OKXInstrumentType::Swap],
+        environment: okx_environment,
         ..Default::default()
     };
 
@@ -153,13 +178,14 @@ async fn main() -> anyhow::Result<()> {
         "momentum-01",
         instrument_id,
         0.0005, // 0.05% — BTC moves ~0.1% per 10 ticks on demo
-        0.001,  // 0.001 BTC for demo
+        base_size,
+        max_trades,
     )));
     swarm.add_agent(Box::new(MeanReversionAgent::new(
         "mean-rev-01",
         instrument_id,
         1.5,    // 1.5 sigma z-score threshold
-        0.001,  // 0.001 BTC for demo
+        base_size,
     )));
 
     let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm);

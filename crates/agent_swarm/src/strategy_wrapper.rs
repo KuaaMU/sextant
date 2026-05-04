@@ -111,7 +111,7 @@ impl SwarmStrategy {
                     quantity,
                     Some(tif),
                     None, // reduce_only
-                    None, // quote_quantity
+                    None, // quote_quantity (not supported for SWAP — sz is in contracts)
                     None, // display_qty
                     None, // expire_time
                     None, // emulation_trigger
