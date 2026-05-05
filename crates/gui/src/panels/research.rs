@@ -6,6 +6,8 @@ use crate::app::GuiState;
 use crate::theme::SextantTheme;
 use crate::util;
 
+use nautilus_state_encoder::SextantEvent;
+
 pub fn render(ui: &mut egui::Ui, state: &GuiState) {
     // ── Ratchet status header ────────────────────────────────────
     let (ir_display, accepted, rejected) = compute_ratchet_stats(state);
@@ -197,8 +199,27 @@ struct Hypothesis {
 }
 
 fn compute_ratchet_stats(state: &GuiState) -> (f64, usize, usize) {
-    if let Some(ref ctx) = state.context {
-        // IR derived from risk-adjusted return
+    if !state.research_events.is_empty() {
+        // Use real autoresearch events
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        let mut latest_ir = 1.0f64;
+        for event in &state.research_events {
+            if let SextantEvent::AutoresearchResult {
+                ir_after, accepted: acc, ..
+            } = event
+            {
+                latest_ir = *ir_after;
+                if *acc {
+                    accepted += 1;
+                } else {
+                    rejected += 1;
+                }
+            }
+        }
+        (latest_ir.max(0.5).min(3.0), accepted.max(1), rejected)
+    } else if let Some(ref ctx) = state.context {
+        // Fallback: IR derived from risk-adjusted return
         let ir = if state.price_history.prices.len() > 1 {
             let prices = &state.price_history.prices;
             let base = prices[0];
@@ -230,6 +251,41 @@ fn generate_hypotheses(
     ctx: &nautilus_state_encoder::ContextWindow,
     state: &GuiState,
 ) -> Vec<Hypothesis> {
+    // If we have real autoresearch events, use them
+    if !state.research_events.is_empty() {
+        let mut hyps = Vec::new();
+        for (i, event) in state.research_events.iter().enumerate() {
+            if let SextantEvent::AutoresearchResult {
+                hypothesis,
+                ir_before,
+                ir_after,
+                accepted,
+                ..
+            } = event
+            {
+                hyps.push(Hypothesis {
+                    id: format!("#H-{:03}", i),
+                    description: format!("\"{}\"", hypothesis),
+                    status: if *accepted { "ACCEPTED" } else { "REJECTED" },
+                    status_color: if *accepted {
+                        SextantTheme::GREEN
+                    } else {
+                        SextantTheme::RED
+                    },
+                    ir_before: *ir_before,
+                    ir_after: *ir_after,
+                    parent: if i > 0 {
+                        format!("#H-{:03}", i - 1)
+                    } else {
+                        "—".into()
+                    },
+                });
+            }
+        }
+        return hyps;
+    }
+
+    // Fallback: generate from context state
     let mut hyps = Vec::new();
     let version = ctx.version;
 

@@ -141,6 +141,51 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
         }
     });
 
+    // ── Extended event buffer stats ──────────────────────────────
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new("EXTENDED EVENT BUFFER")
+            .font(SextantTheme::FONT_SMALL)
+            .strong()
+            .color(SextantTheme::TEXT_SECONDARY),
+    );
+    ui.separator();
+
+    SextantTheme::panel_frame().show(ui, |ui| {
+        let total = state.order_events.len()
+            + state.research_events.len()
+            + state.risk_events.len()
+            + state.intent_events.len();
+        ui.horizontal(|ui| {
+            stat_line(ui, "Total", &total.to_string(), SextantTheme::CYAN);
+            ui.separator();
+            stat_line(
+                ui,
+                "Orders",
+                &state.order_events.len().to_string(),
+                SextantTheme::GREEN,
+            );
+            stat_line(
+                ui,
+                "Research",
+                &state.research_events.len().to_string(),
+                SextantTheme::YELLOW,
+            );
+            stat_line(
+                ui,
+                "Risk",
+                &state.risk_events.len().to_string(),
+                SextantTheme::RED,
+            );
+            stat_line(
+                ui,
+                "Intents",
+                &state.intent_events.len().to_string(),
+                SextantTheme::TEXT_MUTED,
+            );
+        });
+    });
+
     ui.separator();
     ui.label(
         RichText::new("r:reset  h:histogram  s:sparkline")

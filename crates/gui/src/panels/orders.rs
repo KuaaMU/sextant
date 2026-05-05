@@ -6,11 +6,13 @@ use crate::app::GuiState;
 use crate::theme::SextantTheme;
 use crate::util;
 
+use nautilus_state_encoder::SextantEvent;
+
 /// A derived order from the event trace.
 struct Order {
     id: String,
     instrument: String,
-    side: &'static str,
+    side: String,
     qty: String,
     price: String,
     status: &'static str,
@@ -71,7 +73,7 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
                             SextantTheme::MAGENTA
                         };
                         ui.label(
-                            RichText::new(order.side)
+                            RichText::new(order.side.as_str())
                                 .font(SextantTheme::FONT_MONO)
                                 .strong()
                                 .color(c),
@@ -153,11 +155,74 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
 fn derive_orders(state: &GuiState) -> Vec<Order> {
     let mut orders = Vec::new();
 
-    if let Some(ref ctx) = state.context {
+    if !state.order_events.is_empty() {
+        // Use real events from the extended event buffer
+        let mut order_id = 1u32;
+        for event in &state.order_events {
+            match event {
+                SextantEvent::OrderSubmitted {
+                    instrument,
+                    side,
+                    quantity,
+                    price,
+                    ..
+                } => {
+                    orders.push(Order {
+                        id: format!("#{:03}", order_id),
+                        instrument: instrument.clone(),
+                        side: side.clone(),
+                        qty: format!("{:.4}", quantity),
+                        price: price
+                            .map(|p| format!("{:.2}", p))
+                            .unwrap_or_else(|| "MKT".into()),
+                        status: "SENT",
+                        slippage: "—".into(),
+                        status_color: SextantTheme::PENDING,
+                    });
+                    order_id += 1;
+                }
+                SextantEvent::OrderFilled {
+                    order_id: oid,
+                    fill_price,
+                    fill_qty,
+                    slippage_bps,
+                    ..
+                } => {
+                    orders.push(Order {
+                        id: oid.clone(),
+                        instrument: "—".into(),
+                        side: "—".into(),
+                        qty: format!("{:.4}", fill_qty),
+                        price: format!("{:.2}", fill_price),
+                        status: "FILL",
+                        slippage: format!("{:.1}bps", slippage_bps),
+                        status_color: SextantTheme::FILL,
+                    });
+                }
+                SextantEvent::OrderRejected {
+                    order_id: oid,
+                    reason,
+                    ..
+                } => {
+                    orders.push(Order {
+                        id: oid.clone(),
+                        instrument: "—".into(),
+                        side: "—".into(),
+                        qty: "—".into(),
+                        price: "—".into(),
+                        status: "REJ",
+                        slippage: reason.clone(),
+                        status_color: SextantTheme::RED,
+                    });
+                }
+                _ => {}
+            }
+        }
+    } else if let Some(ref ctx) = state.context {
+        // Fallback: derive fills from event trace
         let instrument = ctx.instrument_id_str().to_string();
         let mut order_id = 1;
 
-        // Derive fills from event trace
         for evt in util::events(ctx) {
             if evt.event_type == 2 {
                 // Fill
@@ -169,7 +234,7 @@ fn derive_orders(state: &GuiState) -> Vec<Order> {
                 orders.push(Order {
                     id: format!("#{:03}", order_id),
                     instrument: instrument.clone(),
-                    side,
+                    side: side.into(),
                     qty: qty_str,
                     price: price_str,
                     status: "FILL",
@@ -188,7 +253,7 @@ fn derive_orders(state: &GuiState) -> Vec<Order> {
             orders.push(Order {
                 id: format!("#{:03}", order_id),
                 instrument: instrument.clone(),
-                side,
+                side: side.into(),
                 qty: format!("{:.1}", ctx.position_size.abs()),
                 price: format!("{:.2}", ctx.entry_price),
                 status: "LIVE",
@@ -196,20 +261,25 @@ fn derive_orders(state: &GuiState) -> Vec<Order> {
                 status_color: color,
             });
         }
+    }
 
-        // Placeholder if no orders yet
-        if orders.is_empty() {
-            orders.push(Order {
-                id: "—".into(),
-                instrument,
-                side: "—",
-                qty: "—".into(),
-                price: "—".into(),
-                status: "PENDING",
-                slippage: "—".into(),
-                status_color: SextantTheme::PENDING,
-            });
-        }
+    // Placeholder if no orders yet
+    if orders.is_empty() {
+        let instrument = state
+            .context
+            .as_ref()
+            .map(|c| c.instrument_id_str().to_string())
+            .unwrap_or_else(|| "—".into());
+        orders.push(Order {
+            id: "—".into(),
+            instrument,
+            side: "—".into(),
+            qty: "—".into(),
+            price: "—".into(),
+            status: "PENDING",
+            slippage: "—".into(),
+            status_color: SextantTheme::PENDING,
+        });
     }
 
     orders

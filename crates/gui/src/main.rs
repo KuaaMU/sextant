@@ -12,21 +12,29 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use data::{DataSource, LogEntry, MmapSource, Simulator};
+use data::{DataSource, ExtendedSource, LogEntry, MmapSource, Simulator};
 
 /// Data payload sent from the background thread to the UI.
 pub struct DataPayload {
     pub context: nautilus_state_encoder::ContextWindow,
     pub logs: Vec<LogEntry>,
+    pub events: Vec<nautilus_state_encoder::SextantEvent>,
 }
 
 fn main() {
     tracing_subscriber::fmt::init();
 
-    // Parse CLI: --mmap <path>
+    // Parse CLI: --mmap <path> [--events <path>]
     let args: Vec<String> = std::env::args().collect();
     let mmap_path = args.windows(2).find_map(|w| {
         if w[0] == "--mmap" {
+            Some(w[1].clone())
+        } else {
+            None
+        }
+    });
+    let events_path = args.windows(2).find_map(|w| {
+        if w[0] == "--events" {
             Some(w[1].clone())
         } else {
             None
@@ -56,6 +64,20 @@ fn main() {
             }
         };
 
+        // Optional extended events source
+        let mut ext_source: Option<ExtendedSource> = events_path.and_then(|p| {
+            match ExtendedSource::open(&p) {
+                Ok(s) => {
+                    tracing::info!("Reading extended events from: {}", p);
+                    Some(s)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open events '{}': {}", p, e);
+                    None
+                }
+            }
+        });
+
         // Adaptive polling: fast when data flows, back off when idle
         let mut poll_interval = Duration::from_millis(8); // ~120Hz
         let min_interval = Duration::from_millis(8);
@@ -64,7 +86,11 @@ fn main() {
         loop {
             if let Some(ctx) = source.try_read() {
                 let logs = source.drain_logs();
-                let _ = tx.send(DataPayload { context: ctx, logs });
+                let events = ext_source
+                    .as_mut()
+                    .map(|s| s.drain_events())
+                    .unwrap_or_default();
+                let _ = tx.send(DataPayload { context: ctx, logs, events });
                 poll_interval = min_interval;
             } else {
                 // No new data — exponential backoff

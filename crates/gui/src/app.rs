@@ -6,7 +6,7 @@ use std::time::Duration;
 use egui::{Color32, FontFamily, FontId, RichText};
 use egui_dock::{DockState, NodeIndex, TabViewer};
 
-use nautilus_state_encoder::ContextWindow;
+use nautilus_state_encoder::{ContextWindow, SextantEvent};
 
 use crate::data;
 use crate::panels;
@@ -231,6 +231,11 @@ pub struct GuiState {
     pub log_entries: Vec<LogEntry>,
     pub current_price: f64,
     pub last_version: u64,
+    // Extended events (from --events mmap)
+    pub order_events: Vec<SextantEvent>,
+    pub research_events: Vec<SextantEvent>,
+    pub risk_events: Vec<SextantEvent>,
+    pub intent_events: Vec<SextantEvent>,
 }
 
 impl Default for GuiState {
@@ -242,6 +247,10 @@ impl Default for GuiState {
             log_entries: Vec::new(),
             current_price: 150.0,
             last_version: 0,
+            order_events: Vec::new(),
+            research_events: Vec::new(),
+            risk_events: Vec::new(),
+            intent_events: Vec::new(),
         }
     }
 }
@@ -262,6 +271,40 @@ impl GuiState {
         if self.log_entries.len() > 200 {
             let drain = self.log_entries.len() - 200;
             self.log_entries.drain(..drain);
+        }
+
+        // Sort extended events by type, bounded to last 256 each
+        for event in payload.events {
+            match &event {
+                SextantEvent::OrderSubmitted { .. }
+                | SextantEvent::OrderFilled { .. }
+                | SextantEvent::OrderRejected { .. } => {
+                    self.order_events.push(event);
+                }
+                SextantEvent::AutoresearchResult { .. } => {
+                    self.research_events.push(event);
+                }
+                SextantEvent::RiskAlert { .. } => {
+                    self.risk_events.push(event);
+                }
+                SextantEvent::IntentGenerated { .. }
+                | SextantEvent::IntentApproved { .. }
+                | SextantEvent::IntentRejected { .. } => {
+                    self.intent_events.push(event);
+                }
+            }
+        }
+        // Bound each event list
+        for list in [
+            &mut self.order_events,
+            &mut self.research_events,
+            &mut self.risk_events,
+            &mut self.intent_events,
+        ] {
+            if list.len() > 256 {
+                let drain = list.len() - 256;
+                list.drain(..drain);
+            }
         }
     }
 }
