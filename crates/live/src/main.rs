@@ -30,9 +30,10 @@ use nautilus_common::{
 use nautilus_live::node::LiveNode;
 use nautilus_model::identifiers::{AccountId, InstrumentId, TraderId};
 use nautilus_okx::{
-    common::enums::{OKXEnvironment, OKXInstrumentType},
+    common::enums::{OKXEnvironment, OKXInstrumentType, OKXMarginMode},
     config::{OKXDataClientConfig, OKXExecClientConfig},
     factories::{OKXDataClientFactory, OKXExecutionClientFactory},
+    OKXHttpClient,
 };
 
 use nautilus_agent_swarm::{
@@ -72,6 +73,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let account_id = AccountId::from(account_label);
 
+    // Leverage: SEXTANT_LEVERAGE (default: 10)
+    let leverage: u32 = std::env::var("SEXTANT_LEVERAGE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
     // Order size: SEXTANT_BASE_SIZE (default: 1 contract = 0.01 BTC for swap)
     let base_size: f64 = std::env::var("SEXTANT_BASE_SIZE")
         .ok()
@@ -89,17 +96,45 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30);
 
-    eprintln!("Environment: {} | base_size: {} contracts | max_trades: {} | cooldown: {}s",
+    eprintln!("Environment: {} | base_size: {} contracts | max_trades: {} | cooldown: {}s | leverage: {}x",
         if okx_environment == OKXEnvironment::Live { "LIVE" } else { "DEMO" },
         base_size,
         if max_trades == 0 { "unlimited".to_string() } else { max_trades.to_string() },
         cooldown_secs,
+        leverage,
     );
 
     // Load OKX credentials from environment (.env file)
     let okx_api_key = std::env::var("OKX_API_KEY").ok();
     let okx_api_secret = std::env::var("OKX_API_SECRET").ok();
     let okx_passphrase = std::env::var("OKX_API_PASSPHRASE").ok();
+
+    // ── Set Leverage ───────────────────────────────────────────
+    // Create a temporary HTTP client to set leverage before the node starts.
+    let inst_str = instrument_id.symbol.as_str().to_string();
+    match OKXHttpClient::with_credentials(
+        okx_api_key.clone(),
+        okx_api_secret.clone(),
+        okx_passphrase.clone(),
+        None, // default base URL
+        10,   // timeout_secs
+        3,    // max_retries
+        500,  // retry_delay_ms
+        5000, // retry_delay_max_ms
+        okx_environment,
+        None, // proxy_url
+    ) {
+        Ok(http_client) => {
+            match http_client
+                .set_leverage(&inst_str, leverage, OKXMarginMode::Cross)
+                .await
+            {
+                Ok(()) => eprintln!("Leverage set: {}x for {} (cross margin)", leverage, inst_str),
+                Err(e) => eprintln!("Warning: failed to set leverage: {}. Continuing.", e),
+            }
+        }
+        Err(e) => eprintln!("Warning: failed to create HTTP client for leverage: {}. Continuing.", e),
+    }
 
     let data_config = OKXDataClientConfig {
         api_key: okx_api_key.clone(),
