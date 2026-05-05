@@ -32,10 +32,9 @@ use nautilus_common::{
 use nautilus_live::node::LiveNode;
 use nautilus_model::identifiers::{AccountId, InstrumentId, TraderId};
 use nautilus_okx::{
-    common::enums::{OKXEnvironment, OKXInstrumentType, OKXMarginMode},
+    common::enums::{OKXEnvironment, OKXInstrumentType},
     config::{OKXDataClientConfig, OKXExecClientConfig},
     factories::{OKXDataClientFactory, OKXExecutionClientFactory},
-    OKXHttpClient,
 };
 
 use nautilus_agent_swarm::{
@@ -121,30 +120,54 @@ async fn main() -> anyhow::Result<()> {
     let okx_passphrase = std::env::var("OKX_API_PASSPHRASE").ok();
 
     // ── Set Leverage ───────────────────────────────────────────
-    // Create a temporary HTTP client to set leverage before the node starts.
+    // OKX POST /api/v5/account/set-leverage
     let inst_str = instrument_id.symbol.as_str().to_string();
-    match OKXHttpClient::with_credentials(
-        okx_api_key.clone(),
-        okx_api_secret.clone(),
-        okx_passphrase.clone(),
-        None, // default base URL
-        10,   // timeout_secs
-        3,    // max_retries
-        500,  // retry_delay_ms
-        5000, // retry_delay_max_ms
-        okx_environment,
-        None, // proxy_url
-    ) {
-        Ok(http_client) => {
-            match http_client
-                .set_leverage(&inst_str, leverage, OKXMarginMode::Cross)
-                .await
-            {
-                Ok(()) => eprintln!("Leverage set: {}x for {} (cross margin)", leverage, inst_str),
-                Err(e) => eprintln!("Warning: failed to set leverage: {}. Continuing.", e),
+    let okx_base = if okx_environment == OKXEnvironment::Live {
+        "https://www.okx.com"
+    } else {
+        "https://www.okx.com" // demo uses same base, different creds
+    };
+    let leverage_url = format!("{}/api/v5/account/set-leverage", okx_base);
+    let leverage_body = serde_json::json!({
+        "instId": inst_str,
+        "lever": leverage.to_string(),
+        "mgnMode": "cross",
+    });
+
+    if let (Some(ref key), Some(ref secret), Some(ref pass)) = (&okx_api_key, &okx_api_secret, &okx_passphrase) {
+        // OKX requires HMAC-SHA256 signature: base64(HMAC(secret, timestamp+method+path+body))
+        let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        let sign_input = format!("{}POST/api/v5/account/set-leverage{}", ts, leverage_body);
+        let sign = {
+            use hmac::{Hmac, Mac};
+            use sha2::Sha256;
+            use base64::Engine;
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+            mac.update(sign_input.as_bytes());
+            base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+        };
+
+        match reqwest::Client::new()
+            .post(&leverage_url)
+            .header("OK-ACCESS-KEY", key)
+            .header("OK-ACCESS-SIGN", &sign)
+            .header("OK-ACCESS-TIMESTAMP", &ts)
+            .header("OK-ACCESS-PASSPHRASE", pass)
+            .header("Content-Type", "application/json")
+            .json(&leverage_body)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    eprintln!("Leverage set: {}x for {} (cross margin)", leverage, inst_str);
+                } else {
+                    let body = resp.text().await.unwrap_or_default();
+                    eprintln!("Warning: set leverage response: {}. Continuing.", body);
+                }
             }
+            Err(e) => eprintln!("Warning: failed to set leverage: {}. Continuing.", e),
         }
-        Err(e) => eprintln!("Warning: failed to create HTTP client for leverage: {}. Continuing.", e),
     }
 
     let data_config = OKXDataClientConfig {
