@@ -23,7 +23,7 @@ description = "Sextant: AI-native quant engine built on NautilusTrader"
 # NautilusTrader fork — tag-locked
 nautilus-core = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2" }
 nautilus-model = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2" }
-nautilus-common = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2" }
+nautilus-common = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2", features = ["tracing-bridge"] }
 nautilus-trading = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2" }
 nautilus-execution = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2" }
 nautilus-portfolio = { git = "https://github.com/KuaaMU/nautilus_trader.git", tag = "sextant-base-v1.211.2" }

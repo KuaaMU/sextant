@@ -19,8 +19,10 @@
 //!    cargo run -p sextant-live
 //!    ```
 
+mod event_stream;
 mod mean_reversion_agent;
 mod momentum_agent;
+mod ws_server;
 
 use log::LevelFilter;
 use nautilus_common::{
@@ -49,6 +51,15 @@ async fn main() -> anyhow::Result<()> {
 
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "debug");
+    }
+
+    // Initialize tracing subscriber early so SwarmStrategy logs are visible.
+    // The Nautilus kernel also calls init_tracing() but only if the
+    // `tracing-bridge` feature is enabled on nautilus-system, which we
+    // can't control from the Sextant workspace. Calling it here is
+    // idempotent (the bridge checks TRACING_INITIALIZED).
+    if let Err(e) = nautilus_common::logging::bridge::init_tracing() {
+        eprintln!("Note: tracing subscriber init: {e}");
     }
 
     eprintln!("Sextant Live — OKX Demo Trading");
@@ -236,8 +247,41 @@ async fn main() -> anyhow::Result<()> {
         base_size,
         max_trades,
     )));
+    swarm.add_agent(Box::new(nautilus_agent_swarm::RiskAgent::new(
+        "risk-01",
+        instrument_id,
+    )));
 
-    let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm);
+    // ── Event Stream (WebSocket) ─────────────────────────────────
+    let broadcaster = event_stream::EventBroadcaster::new(1024);
+    let ws_port: u16 = std::env::var("SEXTANT_WS_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8765);
+
+    let ws_tx = broadcaster.sender();
+    let ws_router = ws_server::router(ws_tx);
+
+    tokio::spawn(async move {
+        let addr = format!("127.0.0.1:{}", ws_port);
+        eprintln!("WebSocket event stream: ws://{}", addr);
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        axum::serve(listener, ws_router).await.unwrap();
+    });
+
+    // Wire broadcaster callback into SwarmStrategy
+    let callback_tx = broadcaster.sender();
+    let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm)
+        .with_event_callback(Box::new(move |event| {
+            let stream_event = event_stream::StreamEvent {
+                timestamp_ns: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64,
+                event,
+            };
+            let _ = callback_tx.send(stream_event);
+        }));
     node.add_strategy(strategy)?;
 
     eprintln!("Starting live node for {} (OKX Demo)...", instrument_id);

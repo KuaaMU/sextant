@@ -3,6 +3,7 @@
 use nautilus_model::data::QuoteTick;
 
 use crate::context_window::{ContextWindow, EventToken};
+use crate::extended_events::{ExtendedEventWriter, SextantEvent};
 use crate::mmap_shm::MmapWriter;
 use crate::shared_buffer::SharedStateBuffer;
 
@@ -15,6 +16,7 @@ pub struct StateEncoder {
     buffer: SharedStateBuffer,
     current: ContextWindow,
     mmap_writer: Option<MmapWriter>,
+    event_writer: Option<ExtendedEventWriter>,
 }
 
 impl StateEncoder {
@@ -26,6 +28,7 @@ impl StateEncoder {
             buffer: SharedStateBuffer::new(),
             current,
             mmap_writer: None,
+            event_writer: None,
         }
     }
 
@@ -34,6 +37,20 @@ impl StateEncoder {
         let writer = MmapWriter::open(path)?;
         self.mmap_writer = Some(writer);
         Ok(self)
+    }
+
+    /// Enable extended event output for order/research/agent events.
+    pub fn with_extended_events(mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let writer = ExtendedEventWriter::open(path)?;
+        self.event_writer = Some(writer);
+        Ok(self)
+    }
+
+    /// Push an event into the extended event buffer (if enabled).
+    pub fn push_event(&mut self, event: &SextantEvent) {
+        if let Some(ref mut writer) = self.event_writer {
+            writer.push(event);
+        }
     }
 
     /// Handle a quote tick update.

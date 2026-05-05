@@ -57,7 +57,14 @@ impl PerceptionDecision {
             },
             constraints: vec![],
             confidence: self.confidence,
+            reputation_score: 0.5, // Router has neutral reputation
             time_horizon: std::time::Duration::from_secs(300),
+            title: self.reasoning.clone(),
+            reasoning: self.reasoning.clone(),
+            confidence_label: if self.confidence >= 0.7 { crate::intent::ConfidenceLabel::High } else { crate::intent::ConfidenceLabel::Low },
+            risk_snapshot: crate::intent::RiskSnapshot::default(),
+            expires_at: None,
+            tags: vec![format!("{:?}", self.layer)],
         }
     }
 }

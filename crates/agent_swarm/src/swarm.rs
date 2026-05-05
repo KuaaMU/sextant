@@ -85,12 +85,14 @@ impl SwarmCoordinator {
 
         // 2. Collect intents from all agents
         for agent in &mut self.agents {
-            let intent = agent.perceive(ctx).await;
+            let mut intent = agent.perceive(ctx).await;
+            intent.reputation_score = agent.reputation_score();
             debug!(
-                "Agent '{}' produced intent: {:?} (confidence: {:.2})",
+                "Agent '{}' produced intent: {:?} (confidence: {:.2}, reputation: {:.2})",
                 agent.id(),
                 intent.intent_type,
-                intent.confidence
+                intent.confidence,
+                intent.reputation_score
             );
             intents.push(intent);
         }
@@ -117,6 +119,19 @@ impl SwarmCoordinator {
     fn resolve_conflicts(&self, intents: Vec<AgentIntent>) -> Vec<AgentIntent> {
         match &self.consensus {
             ConsensusStrategy::Pipeline => {
+                // Check for Veto first — overrides all other intents
+                let veto = intents.iter().find(|i| i.intent_type == IntentType::Veto);
+                if let Some(veto_intent) = veto {
+                    info!(
+                        "RISK VETO from '{}': {} — all intents overridden",
+                        veto_intent.agent_id, veto_intent.description
+                    );
+                    return vec![AgentIntent::hold(
+                        &veto_intent.agent_id,
+                        veto_intent.target_instrument,
+                    )];
+                }
+
                 // === P0: Pick highest-confidence non-Hold intent ===
                 // TODO(P1): Use ConsensusEngine trait with normalized confidence
                 let mut first_intent: Option<AgentIntent> = None;
@@ -193,7 +208,7 @@ impl SwarmCoordinator {
                 result
             }
             ConsensusStrategy::WeightedVote => {
-                // Simple: take the intent with highest confidence
+                // Weighted vote: score = confidence * reputation_score
                 let mut by_instrument: std::collections::HashMap<String, Vec<AgentIntent>> =
                     std::collections::HashMap::new();
                 for intent in intents {
@@ -210,8 +225,10 @@ impl SwarmCoordinator {
                             .into_iter()
                             .filter(|i| i.intent_type != IntentType::Hold)
                             .max_by(|a, b| {
-                                a.confidence
-                                    .partial_cmp(&b.confidence)
+                                let score_a = a.confidence * a.reputation_score;
+                                let score_b = b.confidence * b.reputation_score;
+                                score_a
+                                    .partial_cmp(&score_b)
                                     .unwrap_or(std::cmp::Ordering::Equal)
                             })
                     })
@@ -271,7 +288,14 @@ mod tests {
                 },
                 constraints: vec![],
                 confidence: self.confidence,
+                reputation_score: 0.5,
                 time_horizon: Duration::from_secs(300),
+                title: format!("{:?} from {}", self.intent_type, self.id),
+                reasoning: String::new(),
+                confidence_label: crate::intent::ConfidenceLabel::Low,
+                risk_snapshot: crate::intent::RiskSnapshot::default(),
+                expires_at: None,
+                tags: vec![],
             }
         }
 

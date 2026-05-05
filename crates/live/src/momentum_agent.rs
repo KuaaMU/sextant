@@ -119,7 +119,14 @@ impl Agent for MomentumAgent {
                 },
                 constraints: vec![],
                 confidence: 1.0,
+                reputation_score: 0.5,
                 time_horizon: Duration::from_secs(300),
+                title: "FORCE_TRADE".into(),
+                reasoning: "Debug forced trade signal".into(),
+                confidence_label: nautilus_agent_swarm::ConfidenceLabel::High,
+                risk_snapshot: nautilus_agent_swarm::RiskSnapshot::default(),
+                expires_at: None,
+                tags: vec!["debug".into()],
             };
         }
 
@@ -181,7 +188,14 @@ impl Agent for MomentumAgent {
             },
             constraints: vec![],
             confidence: (momentum.abs() / self.threshold).clamp(0.3, 0.95),
+            reputation_score: 0.5, // Default reputation
             time_horizon: Duration::from_secs(300),
+            title: format!("momentum {:+.5}", momentum),
+            reasoning: format!("momentum={:+.5} threshold={:.5}", momentum, self.threshold),
+            confidence_label: if momentum.abs() > self.threshold { nautilus_agent_swarm::ConfidenceLabel::High } else { nautilus_agent_swarm::ConfidenceLabel::Low },
+            risk_snapshot: nautilus_agent_swarm::RiskSnapshot::default(),
+            expires_at: None,
+            tags: vec!["momentum".into()],
         }
     }
 

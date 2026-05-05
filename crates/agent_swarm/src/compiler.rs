@@ -54,7 +54,7 @@ impl ExecutionTemplate {
             IntentType::TrendFollow => Self::TrendFollowTrailing,
             IntentType::MeanReversion => Self::MeanRevertLimit,
             IntentType::LiquidationCapture => Self::LiquidationCaptureIoc,
-            IntentType::Hold => Self::Hold,
+            IntentType::Hold | IntentType::Veto => Self::Hold,
         }
     }
 }
@@ -312,7 +312,14 @@ mod tests {
             },
             constraints: vec![],
             confidence: 0.8,
+            reputation_score: 0.5,
             time_horizon: Duration::from_secs(300),
+            title: "test".to_string(),
+            reasoning: String::new(),
+            confidence_label: crate::intent::ConfidenceLabel::Low,
+            risk_snapshot: crate::intent::RiskSnapshot::default(),
+            expires_at: None,
+            tags: vec![],
         }
     }
 

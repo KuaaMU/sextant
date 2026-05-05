@@ -11,12 +11,13 @@ use std::time::Instant;
 use nautilus_common::actor::DataActor;
 use nautilus_model::{
     data::QuoteTick,
-    enums::{OrderSide as NautilusOrderSide, TimeInForce as NautilusTif, TriggerType},
+    enums::{OrderSide as NautilusOrderSide, TimeInForce as NautilusTif, TrailingOffsetType, TriggerType},
     events::order::filled::OrderFilled,
     identifiers::{ClientOrderId, InstrumentId},
     types::{Price, Quantity},
 };
-use nautilus_state_encoder::StateEncoder;
+use rust_decimal::Decimal;
+use nautilus_state_encoder::{StateEncoder, SextantEvent};
 use nautilus_trading::{
     nautilus_strategy,
     strategy::{Strategy, StrategyConfig, StrategyCore},
@@ -24,9 +25,11 @@ use nautilus_trading::{
 use tracing::{debug, info, warn};
 
 use crate::agent::AgentFeedback;
-use crate::intent::{ExecutionDirective, OrderSide, TimeInForce};
+use crate::intent::{ExecutionDirective, ExecutionStyle, OrderSide, TimeInForce};
 use crate::swarm::SwarmCoordinator;
 use nautilus_reputation::AutonomySlider;
+use nautilus_risk_potential::RiskPotentialField;
+use nautilus_autoresearch::{AutoresearchRuntime, StrategyHypothesis};
 
 /// Nautilus Strategy wrapper for the Sextant AgentSwarm.
 ///
@@ -56,6 +59,16 @@ pub struct SwarmStrategy {
     last_cycle_time: Option<Instant>,
     /// Dry-run mode: log orders without submitting (SEXTANT_DRY_RUN=1).
     dry_run: bool,
+    /// Risk potential field for gradient-based position regulation.
+    risk_field: RiskPotentialField,
+    /// Autoresearch runtime (Karpathy Ratchet).
+    autoresearch: AutoresearchRuntime,
+    /// Price history for autoresearch.
+    price_history: Vec<f64>,
+    /// Timestamp of last autoresearch run.
+    last_autoresearch: Option<Instant>,
+    /// Optional callback for broadcasting events to external consumers (WebSocket, GUI).
+    event_callback: Option<Box<dyn Fn(SextantEvent) + Send + Sync>>,
 }
 
 impl SwarmStrategy {
@@ -101,6 +114,34 @@ impl SwarmStrategy {
             eprintln!("DRY RUN MODE — orders will be logged but NOT submitted");
         }
 
+        // Risk potential field: position_limit, drawdown_limit, concentration_limit
+        // SEXTANT_RISK_POSITION_LIMIT (default: 10000 USDT notional)
+        // SEXTANT_RISK_DRAWDOWN_LIMIT (default: -0.05 = -5%)
+        // SEXTANT_RISK_CONCENTRATION_LIMIT (default: 0.3 = 30%)
+        let position_limit: f64 = std::env::var("SEXTANT_RISK_POSITION_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10000.0);
+        let drawdown_limit: f64 = std::env::var("SEXTANT_RISK_DRAWDOWN_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-0.05);
+        let concentration_limit: f64 = std::env::var("SEXTANT_RISK_CONCENTRATION_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.3);
+        let risk_field = RiskPotentialField::new(position_limit, drawdown_limit, concentration_limit);
+        eprintln!("Risk field: position_limit={} drawdown_limit={:.1}% concentration_limit={:.0}%",
+            position_limit, drawdown_limit * 100.0, concentration_limit * 100.0);
+
+        // Autoresearch: Karpathy Ratchet for strategy evolution
+        let improvement_threshold: f64 = std::env::var("SEXTANT_RATCHET_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.05); // 5% improvement required
+        let autoresearch = AutoresearchRuntime::new(improvement_threshold);
+        eprintln!("Autoresearch: improvement_threshold={:.1}%", improvement_threshold * 100.0);
+
         // ContextWindow stores symbol only (e.g. "BTC-USDT"), venue is added by SwarmCoordinator
         let symbol = instrument_id.symbol.as_str().to_string();
         Self {
@@ -118,7 +159,18 @@ impl SwarmStrategy {
             cooldown_secs,
             last_cycle_time: None,
             dry_run,
+            risk_field,
+            autoresearch,
+            price_history: Vec::with_capacity(600), // ~10 min of 1Hz data
+            last_autoresearch: None,
+            event_callback: None,
         }
+    }
+
+    /// Set an event callback for broadcasting events to external consumers.
+    pub fn with_event_callback(mut self, callback: Box<dyn Fn(SextantEvent) + Send + Sync>) -> Self {
+        self.event_callback = Some(callback);
+        self
     }
 
     /// Convert a Sextant ExecutionDirective into Nautilus orders and submit them.
@@ -128,12 +180,12 @@ impl SwarmStrategy {
             if self.dry_run {
                 for order_spec in &directive.orders {
                     info!(
-                        "[DRY RUN] Would execute: {:?} {} qty={} instrument={} tif={:?}",
+                        "[DRY RUN] Would execute: {:?} qty={:.6} instrument={} tif={:?} style={:?}",
                         order_spec.side,
-                        order_spec.quantity,
                         order_spec.quantity,
                         order_spec.instrument_id,
                         order_spec.time_in_force,
+                        directive.execution_style,
                     );
                 }
                 continue;
@@ -146,38 +198,210 @@ impl SwarmStrategy {
                 directive.execution_style
             );
 
-            for order_spec in &directive.orders {
-                let side = match order_spec.side {
-                    OrderSide::Buy => NautilusOrderSide::Buy,
-                    OrderSide::Sell => NautilusOrderSide::Sell,
-                };
+            match &directive.execution_style {
+                ExecutionStyle::Twap { slices, interval } => {
+                    self.execute_twap(directive, *slices, *interval);
+                }
+                ExecutionStyle::Limit { price, post_only } => {
+                    self.execute_limit(directive, *price, *post_only);
+                }
+                ExecutionStyle::TrailingStop { offset_bps } => {
+                    self.execute_trailing_stop(directive, *offset_bps);
+                }
+                ExecutionStyle::Ioc | ExecutionStyle::Fok => {
+                    self.execute_market(directive);
+                }
+                ExecutionStyle::Vwap { .. } => {
+                    warn!("VWAP execution not yet implemented, using market order");
+                    self.execute_market(directive);
+                }
+            }
+        }
+    }
 
-                let tif = match order_spec.time_in_force {
-                    TimeInForce::Gtc => NautilusTif::Gtc,
-                    TimeInForce::Ioc => NautilusTif::Ioc,
-                    TimeInForce::Fok => NautilusTif::Fok,
-                    TimeInForce::Gtd => NautilusTif::Gtd,
-                };
+    /// Execute directive as market orders (existing behavior).
+    fn execute_market(&mut self, directive: &ExecutionDirective) {
+        for order_spec in &directive.orders {
+            let side = match order_spec.side {
+                OrderSide::Buy => NautilusOrderSide::Buy,
+                OrderSide::Sell => NautilusOrderSide::Sell,
+            };
+            let tif = match order_spec.time_in_force {
+                TimeInForce::Gtc => NautilusTif::Gtc,
+                TimeInForce::Ioc => NautilusTif::Ioc,
+                TimeInForce::Fok => NautilusTif::Fok,
+                TimeInForce::Gtd => NautilusTif::Gtd,
+            };
+            let quantity = Quantity::new(order_spec.quantity, 8);
+            let order = self.core.order_factory().market(
+                order_spec.instrument_id,
+                side,
+                quantity,
+                Some(tif),
+                None, None, None, None, None, None,
+            );
+            if let Err(e) = self.submit_order(order, None, None) {
+                warn!("Failed to submit market order: {}", e);
+            } else {
+                self.emit_order_submitted(directive, order_spec, "Market");
+            }
+        }
+    }
 
-                let quantity = Quantity::new(order_spec.quantity, 8);
+    /// Execute directive as limit orders (for MeanReversion).
+    fn execute_limit(&mut self, directive: &ExecutionDirective, price: f64, post_only: bool) {
+        for order_spec in &directive.orders {
+            let side = match order_spec.side {
+                OrderSide::Buy => NautilusOrderSide::Buy,
+                OrderSide::Sell => NautilusOrderSide::Sell,
+            };
+            let quantity = Quantity::new(order_spec.quantity, 8);
+            let limit_price = Price::new(price, 8);
+            let order = self.core.order_factory().limit(
+                order_spec.instrument_id,
+                side,
+                quantity,
+                limit_price,
+                Some(NautilusTif::Gtc), // time_in_force
+                None,                   // expire_time
+                Some(post_only),        // post_only
+                None,                   // reduce_only
+                None,                   // quote_quantity
+                None,                   // display_qty
+                None,                   // emulation_trigger
+                None,                   // trigger_instrument_id
+                None,                   // exec_algorithm_id
+                None,                   // exec_algorithm_params
+                None,                   // tags
+                None,                   // client_order_id
+            );
+            if let Err(e) = self.submit_order(order, None, None) {
+                warn!("Failed to submit limit order: {}", e);
+            } else {
+                self.emit_order_submitted(directive, order_spec, "Limit");
+            }
+        }
+    }
 
+    /// Execute directive as trailing stop orders (for TrendFollow).
+    fn execute_trailing_stop(&mut self, directive: &ExecutionDirective, offset_bps: f64) {
+        for order_spec in &directive.orders {
+            let side = match order_spec.side {
+                OrderSide::Buy => NautilusOrderSide::Buy,
+                OrderSide::Sell => NautilusOrderSide::Sell,
+            };
+            let quantity = Quantity::new(order_spec.quantity, 8);
+
+            // Compute trailing offset from bps: e.g. 50bps on $60000 BTC = $30
+            let mid = Self::parse_mid_from_encoder(&self.encoder);
+            let trailing_offset_price = mid * offset_bps / 10000.0;
+            let trailing_offset = Decimal::try_from(trailing_offset_price)
+                .unwrap_or(Decimal::from(1));
+
+            // Activation price: current mid (trailing starts here)
+            let activation_price = Price::new(mid, 8);
+
+            let order = self.core.order_factory().trailing_stop_market(
+                order_spec.instrument_id,
+                side,
+                quantity,
+                trailing_offset,                   // trailing_offset (Decimal)
+                Some(TrailingOffsetType::Price),   // trailing_offset_type
+                Some(activation_price),            // activation_price
+                None,                              // trigger_price
+                Some(TriggerType::LastPrice),      // trigger_type
+                Some(NautilusTif::Gtc),            // time_in_force
+                None,                              // expire_time
+                None,                              // reduce_only
+                None,                              // quote_quantity
+                None,                              // display_qty
+                None,                              // emulation_trigger
+                None,                              // trigger_instrument_id
+                None,                              // exec_algorithm_id
+                None,                              // exec_algorithm_params
+                None,                              // tags
+                None,                              // client_order_id
+            );
+            if let Err(e) = self.submit_order(order, None, None) {
+                warn!("Failed to submit trailing stop order: {}", e);
+            } else {
+                self.emit_order_submitted(directive, order_spec, "TrailingStop");
+            }
+        }
+    }
+
+    /// Execute directive as TWAP (time-weighted average price).
+    /// MVP: submits all slices immediately. Timer-based spacing is P1 refinement.
+    fn execute_twap(&mut self, directive: &ExecutionDirective, slices: u32, _interval: std::time::Duration) {
+        for order_spec in &directive.orders {
+            let side = match order_spec.side {
+                OrderSide::Buy => NautilusOrderSide::Buy,
+                OrderSide::Sell => NautilusOrderSide::Sell,
+            };
+            let tif = match order_spec.time_in_force {
+                TimeInForce::Gtc => NautilusTif::Gtc,
+                TimeInForce::Ioc => NautilusTif::Ioc,
+                TimeInForce::Fok => NautilusTif::Fok,
+                TimeInForce::Gtd => NautilusTif::Gtd,
+            };
+            let slice_qty = order_spec.quantity / slices as f64;
+
+            for i in 0..slices {
+                let quantity = Quantity::new(slice_qty, 8);
                 let order = self.core.order_factory().market(
                     order_spec.instrument_id,
                     side,
                     quantity,
                     Some(tif),
-                    None, // reduce_only
-                    None, // quote_quantity (not supported for SWAP — sz is in contracts)
-                    None, // display_qty
-                    None, // expire_time
-                    None, // emulation_trigger
-                    None, // tags
+                    None, None, None, None, None, None,
                 );
-
                 if let Err(e) = self.submit_order(order, None, None) {
-                    warn!("Failed to submit order: {}", e);
+                    warn!("Failed to submit TWAP slice {}/{}: {}", i + 1, slices, e);
                 }
             }
+            self.emit_order_submitted(directive, order_spec, "Twap");
+            info!(
+                "TWAP: submitted {} slices of {:.6} each (timer-based spacing is P1)",
+                slices, slice_qty
+            );
+        }
+    }
+
+    /// Emit an OrderSubmitted event to the extended event buffer and callback.
+    fn emit_order_submitted(&mut self, directive: &ExecutionDirective, order_spec: &crate::intent::OrderSpecification, order_type: &str) {
+        let event = SextantEvent::OrderSubmitted {
+            intent_id: format!("{:?}", directive.intent_id),
+            order_type: order_type.to_string(),
+            instrument: order_spec.instrument_id.to_string(),
+            side: format!("{:?}", order_spec.side),
+            quantity: order_spec.quantity,
+            price: order_spec.price,
+            timestamp_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64,
+        };
+        self.encoder.push_event(&event);
+        if let Some(ref cb) = self.event_callback {
+            cb(event);
+        }
+    }
+
+    /// Parse mid price from the encoder's current ContextWindow.
+    fn parse_mid_from_encoder(encoder: &StateEncoder) -> f64 {
+        let ctx = encoder.current_context();
+        let state = ctx.market_state_str();
+        let bid = state
+            .find("bid:")
+            .and_then(|i| state[i + 4..].split(' ').next())
+            .and_then(|s| s.parse::<f64>().ok());
+        let ask = state
+            .find("ask:")
+            .and_then(|i| state[i + 4..].split(' ').next())
+            .and_then(|s| s.parse::<f64>().ok());
+        match (bid, ask) {
+            (Some(b), Some(a)) if b > 0.0 && a > 0.0 => (b + a) / 2.0,
+            _ => 0.0,
         }
     }
 }
@@ -253,6 +477,19 @@ impl DataActor for SwarmStrategy {
             "Order filled: {} {} @ {:.2} → position={:.6} entry={:.2} pnl={:.2}",
             event.order_side, qty, price, self.position_size, self.entry_price, unrealized_pnl
         );
+
+        // Emit OrderFilled event to extended event buffer and callback
+        let fill_event = SextantEvent::OrderFilled {
+            order_id: event.client_order_id.to_string(),
+            fill_price: price,
+            fill_qty: qty,
+            slippage_bps: 0.0, // TODO: compute actual slippage
+            timestamp_ns: event.ts_event.as_u64(),
+        };
+        self.encoder.push_event(&fill_event);
+        if let Some(ref cb) = self.event_callback {
+            cb(fill_event);
+        }
 
         // ── Stop-loss management ──────────────────────────────────
         if new_size.abs() > 1e-12 && old_size.abs() < 1e-12 && self.sl_pct > 0.0 {
@@ -360,7 +597,75 @@ impl DataActor for SwarmStrategy {
         // 1. Feed quote into StateEncoder → ContextWindow → SharedStateBuffer
         self.encoder.on_quote(quote);
 
-        // 2. Cooldown check — skip swarm cycle if too soon
+        // 2. Compute risk potential gradient and update encoder
+        let position = self.position_size;
+        let drawdown = if self.entry_price > 0.0 && position.abs() > 0.0 {
+            let mid = (quote.bid_price.as_f64() + quote.ask_price.as_f64()) / 2.0;
+            (mid - self.entry_price) / self.entry_price * position.signum()
+        } else {
+            0.0
+        };
+        let gradient = self.risk_field.gradient(position.abs(), drawdown, 0.0);
+        let total_potential = self.risk_field.total(position.abs(), drawdown, 0.0);
+        self.encoder.update_risk(total_potential, gradient.position, gradient.drawdown);
+
+        if total_potential > 1.0 {
+            warn!(
+                "Risk potential HIGH: {:.2} (position={:.6}, drawdown={:.4}, gradient_mag={:.4})",
+                total_potential, position, drawdown, gradient.magnitude()
+            );
+        } else {
+            debug!(
+                "Risk potential: {:.4} (position={:.6}, drawdown={:.4})",
+                total_potential, position, drawdown
+            );
+        }
+
+        // 3. Collect price history for autoresearch
+        let mid = (quote.bid_price.as_f64() + quote.ask_price.as_f64()) / 2.0;
+        self.price_history.push(mid);
+        if self.price_history.len() > 600 {
+            self.price_history.remove(0); // Keep last 600 prices (~10 min at 1Hz)
+        }
+
+        // Run autoresearch ratchet every 5 minutes (if enough data)
+        let should_run_ratchet = self.price_history.len() >= 60
+            && self.last_autoresearch.map_or(true, |t| t.elapsed().as_secs() > 300);
+
+        if should_run_ratchet {
+            self.last_autoresearch = Some(Instant::now());
+            let prices = self.price_history.clone();
+            let returns: Vec<f64> = prices.windows(2)
+                .map(|w| (w[1] - w[0]) / w[0])
+                .collect();
+
+            // Generate hypotheses based on recent momentum
+            let recent_momentum = if returns.len() >= 10 {
+                returns[returns.len()-10..].iter().sum::<f64>()
+            } else {
+                0.0
+            };
+
+            // Submit hypothesis: try different window sizes
+            let window = if recent_momentum > 0.0 { 10 } else { 20 };
+            self.autoresearch.submit(StrategyHypothesis {
+                id: nautilus_core::UUID4::new(),
+                description: format!("momentum window={}", window),
+                code_patch: String::new(),
+                parent_id: None,
+            });
+
+            // Run ratchet
+            self.autoresearch.run_ratchet(&returns, &prices);
+            info!(
+                "Autoresearch: {} hypotheses evaluated, {} accepted, baseline_ir={:.4}",
+                self.autoresearch.total_evaluated(),
+                self.autoresearch.accepted_count(),
+                self.autoresearch.baseline_ir
+            );
+        }
+
+        // 4. Cooldown check — skip swarm cycle if too soon
         let now = Instant::now();
         if let Some(last) = self.last_cycle_time {
             let elapsed = now.duration_since(last).as_secs();
@@ -374,7 +679,7 @@ impl DataActor for SwarmStrategy {
         }
         self.last_cycle_time = Some(now);
 
-        // 3. Read current context and run swarm cycle
+        // 4. Read current context and run swarm cycle
         // === P0: Cycle timeout to prevent hangs ===
         // TODO(P1): Per-agent isolation via AgentSandbox (catch_unwind + resource quotas)
         let ctx = self.encoder.current_context();
@@ -395,7 +700,7 @@ impl DataActor for SwarmStrategy {
 
         debug!("Swarm cycle produced {} directives", directives.len());
 
-        // 4. Execute resulting directives
+        // 5. Execute resulting directives
         if !directives.is_empty() {
             debug!("Swarm produced {} directives", directives.len());
             self.execute_directives(directives);
@@ -443,7 +748,14 @@ mod tests {
                 },
                 constraints: vec![],
                 confidence: 0.8,
+                reputation_score: 0.5,
                 time_horizon: Duration::from_secs(300),
+                title: format!("{:?} from {}", self.intent_type, self.id),
+                reasoning: String::new(),
+                confidence_label: crate::intent::ConfidenceLabel::Low,
+                risk_snapshot: crate::intent::RiskSnapshot::default(),
+                expires_at: None,
+                tags: vec![],
             }
         }
 

@@ -38,4 +38,10 @@ pub trait Agent: Send + Sync {
     fn confidence(&self) -> f64 {
         0.5
     }
+
+    /// Agent's reputation score [0.0, 1.0] for weighted voting.
+    /// Higher reputation = more influence in consensus.
+    fn reputation_score(&self) -> f64 {
+        0.5
+    }
 }

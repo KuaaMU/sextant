@@ -16,6 +16,8 @@ nautilus-common = { workspace = true }
 
 memmap2 = { workspace = true }
 parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

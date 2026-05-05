@@ -75,7 +75,14 @@ async fn test_full_pipeline_router_hold_escalates_to_agent() {
                 },
                 constraints: vec![],
                 confidence: 0.9,
+                reputation_score: 0.5,
                 time_horizon: std::time::Duration::from_secs(300),
+                title: "Bearish signal".to_string(),
+                reasoning: String::new(),
+                confidence_label: nautilus_agent_swarm::ConfidenceLabel::High,
+                risk_snapshot: nautilus_agent_swarm::RiskSnapshot::default(),
+                expires_at: None,
+                tags: vec![],
             }
         }
         async fn on_feedback(&mut self, _feedback: &nautilus_agent_swarm::AgentFeedback) {}

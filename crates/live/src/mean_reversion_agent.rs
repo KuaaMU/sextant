@@ -188,7 +188,14 @@ impl Agent for MeanReversionAgent {
             },
             constraints: vec![],
             confidence: (z.abs() / self.z_threshold).clamp(0.3, 0.9),
+            reputation_score: 0.5, // Default reputation
             time_horizon: Duration::from_secs(180),
+            title: format!("z-score {:+.2}", z),
+            reasoning: format!("z={:+.2} spread={:.1}bps threshold={:.2}", z, spread_bps, self.z_threshold),
+            confidence_label: if z.abs() > self.z_threshold { nautilus_agent_swarm::ConfidenceLabel::High } else { nautilus_agent_swarm::ConfidenceLabel::Low },
+            risk_snapshot: nautilus_agent_swarm::RiskSnapshot::default(),
+            expires_at: None,
+            tags: vec!["mean-reversion".into()],
         }
     }
 
@@ -228,7 +235,14 @@ impl MeanReversionAgent {
             },
             constraints: vec![],
             confidence: 0.8,
+            reputation_score: 0.5,
             time_horizon: Duration::from_secs(180),
+            title: "Hold".into(),
+            reasoning: "spread too wide, holding".into(),
+            confidence_label: nautilus_agent_swarm::ConfidenceLabel::Low,
+            risk_snapshot: nautilus_agent_swarm::RiskSnapshot::default(),
+            expires_at: None,
+            tags: vec![],
         }
     }
 }
