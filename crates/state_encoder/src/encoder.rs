@@ -40,10 +40,10 @@ impl StateEncoder {
     }
 
     /// Enable extended event output for order/research/agent events.
-    pub fn with_extended_events(mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+    pub fn with_extended_events(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         let writer = ExtendedEventWriter::open(path)?;
         self.event_writer = Some(writer);
-        Ok(self)
+        Ok(())
     }
 
     /// Push an event into the extended event buffer (if enabled).

@@ -173,6 +173,12 @@ impl SwarmStrategy {
         self
     }
 
+    /// Enable extended event mmap output for GUI/TUI consumption.
+    pub fn with_extended_events(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        self.encoder.with_extended_events(path)?;
+        Ok(())
+    }
+
     /// Convert a Sextant ExecutionDirective into Nautilus orders and submit them.
     fn execute_directives(&mut self, directives: Vec<ExecutionDirective>) {
         for directive in &directives {

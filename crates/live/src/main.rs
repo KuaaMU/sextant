@@ -269,19 +269,30 @@ async fn main() -> anyhow::Result<()> {
         axum::serve(listener, ws_router).await.unwrap();
     });
 
-    // Wire broadcaster callback into SwarmStrategy
+    // Extended event mmap for GUI consumption
+    let events_path = std::env::var("SEXTANT_EVENTS_PATH")
+        .unwrap_or_else(|_| "sextant_events.mmap".to_string());
+
+    let mut strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm);
+    if let Err(e) = strategy.with_extended_events(&events_path) {
+        eprintln!("Warning: events mmap '{}': {}. WS-only mode.", events_path, e);
+    } else {
+        eprintln!("Extended events mmap: {}", events_path);
+    }
+
+    // Wire broadcaster callback for WebSocket event stream
     let callback_tx = broadcaster.sender();
-    let strategy = SwarmStrategy::new("SWARM-001", instrument_id, swarm)
-        .with_event_callback(Box::new(move |event| {
-            let stream_event = event_stream::StreamEvent {
-                timestamp_ns: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64,
-                event,
-            };
-            let _ = callback_tx.send(stream_event);
-        }));
+    let strategy = strategy.with_event_callback(Box::new(move |event| {
+        let stream_event = event_stream::StreamEvent {
+            timestamp_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64,
+            event,
+        };
+        let _ = callback_tx.send(stream_event);
+    }));
+
     node.add_strategy(strategy)?;
 
     eprintln!("Starting live node for {} (OKX Demo)...", instrument_id);
