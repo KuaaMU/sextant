@@ -73,11 +73,11 @@ async fn main() -> anyhow::Result<()> {
     };
     let account_id = AccountId::from(account_label);
 
-    // Leverage: SEXTANT_LEVERAGE (default: 10)
+    // Leverage: SEXTANT_LEVERAGE (default: 2 — keep low during testing to limit losses)
     let leverage: u32 = std::env::var("SEXTANT_LEVERAGE")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
+        .unwrap_or(2);
 
     // Order size: SEXTANT_BASE_SIZE (default: 1 contract = 0.01 BTC for swap)
     let base_size: f64 = std::env::var("SEXTANT_BASE_SIZE")
