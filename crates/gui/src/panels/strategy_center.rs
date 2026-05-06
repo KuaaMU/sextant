@@ -49,7 +49,7 @@ pub struct Decision {
     pub result: String,
 }
 
-pub fn render(ui: &mut egui::Ui, state: &GuiState) {
+pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
     // Title
     ui.label(
         RichText::new("STRATEGY CENTER")
@@ -59,11 +59,11 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
     );
     ui.add_space(12.0);
 
-    // Build strategy cards from agents and events
+    // Build strategy cards from agents and events, using persistent params
     let cards = build_strategy_cards(state);
 
     for card in &cards {
-        render_strategy_card(ui, card);
+        render_strategy_card(ui, state, card);
         ui.add_space(8.0);
     }
 
@@ -84,7 +84,7 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
     });
 }
 
-fn render_strategy_card(ui: &mut egui::Ui, card: &StrategyCard) {
+fn render_strategy_card(ui: &mut egui::Ui, state: &mut GuiState, card: &StrategyCard) {
     let status_color = match card.status {
         StrategyStatus::Running => SextantTheme::GREEN,
         StrategyStatus::Paused => SextantTheme::YELLOW,
@@ -96,6 +96,17 @@ fn render_strategy_card(ui: &mut egui::Ui, card: &StrategyCard) {
         StrategyStatus::Paused => "Paused",
         StrategyStatus::Alert => "Alert",
     };
+
+    // Ensure persistent params exist for this agent
+    let agent_params = state
+        .strategy_params
+        .entry(card.id.clone())
+        .or_insert_with(|| {
+            card.params
+                .iter()
+                .map(|p| (p.name.clone(), p.value))
+                .collect()
+        });
 
     // Card frame with accent border
     SextantTheme::accent_frame(status_color).show(ui, |ui| {
@@ -119,22 +130,22 @@ fn render_strategy_card(ui: &mut egui::Ui, card: &StrategyCard) {
 
         ui.add_space(4.0);
 
-        // Parameters
+        // Parameters — sliders write to persistent state
         ui.label(
             RichText::new("Parameters")
                 .font(SextantTheme::FONT_SMALL)
                 .color(SextantTheme::TEXT_SECONDARY),
         );
         for param in &card.params {
+            let val = agent_params.entry(param.name.clone()).or_insert(param.value);
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("{}:", param.name))
                         .font(SextantTheme::FONT_SMALL)
                         .color(SextantTheme::TEXT_MUTED),
                 );
-                let mut val = param.value;
                 ui.add(
-                    egui::Slider::new(&mut val, param.min..=param.max)
+                    egui::Slider::new(val, param.min..=param.max)
                         .step_by(param.step)
                         .text(&param.unit),
                 );

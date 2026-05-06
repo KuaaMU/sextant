@@ -26,20 +26,8 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
 
     ui.add_space(4.0);
 
-    // ── Latency distribution + Stats ─────────────────────────────
+    // ── Stats ─────────────────────────────────────────────────────
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.label(
-                RichText::new("WRITE LATENCY DISTRIBUTION (ns)")
-                    .font(SextantTheme::FONT_SMALL)
-                    .color(SextantTheme::TEXT_MUTED),
-            );
-            latency_bar(ui, "  50ns", 0.85, SextantTheme::GREEN);
-            latency_bar(ui, " 100ns", 0.12, SextantTheme::YELLOW);
-            latency_bar(ui, " 200ns", 0.02, SextantTheme::TEXT_MUTED);
-            latency_bar(ui, " 500ns", 0.01, SextantTheme::TEXT_MUTED);
-        });
-        ui.separator();
         ui.vertical(|ui| {
             // Real stats from context
             if let Some(ref ctx) = state.context {
@@ -185,13 +173,6 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
             );
         });
     });
-
-    ui.separator();
-    ui.label(
-        RichText::new("r:reset  h:histogram  s:sparkline")
-            .font(SextantTheme::FONT_SMALL)
-            .color(SextantTheme::TEXT_MUTED),
-    );
 }
 
 fn stat_line(ui: &mut egui::Ui, label: &str, value: &str, color: Color32) {
@@ -205,33 +186,5 @@ fn stat_line(ui: &mut egui::Ui, label: &str, value: &str, color: Color32) {
             .font(SextantTheme::FONT_MONO)
             .color(color),
     );
-}
-
-fn latency_bar(ui: &mut egui::Ui, label: &str, pct: f64, color: Color32) {
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(label)
-                .font(SextantTheme::FONT_MONO)
-                .color(SextantTheme::TEXT_MUTED),
-        );
-
-        let desired = egui::vec2(120.0, 14.0);
-        let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
-        let track_r = egui::CornerRadius::same(7);
-
-        ui.painter()
-            .rect_filled(rect, track_r, SextantTheme::BG_DEEP);
-
-        let fill_w = rect.width() * pct as f32;
-        let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height()));
-        ui.painter()
-            .rect_filled(fill_rect, track_r, color.linear_multiply(0.7));
-
-        ui.label(
-            RichText::new(format!("{}%", (pct * 100.0) as u32))
-                .font(SextantTheme::FONT_SMALL)
-                .color(SextantTheme::TEXT_MUTED),
-        );
-    });
 }
 

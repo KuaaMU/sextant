@@ -94,7 +94,7 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
                         .color(SextantTheme::TEXT_MUTED),
                 );
                 ui.label(
-                    RichText::new("[1] Orders  [2] Research  [3] Memory  [4] Hull  [Esc] Close")
+                    RichText::new("[1] Orders  [2] Research  [3] Memory  [4] Hull  [5] Strategy  [6] Log  [7] Lab  [Esc] Close")
                         .font(SextantTheme::FONT_SMALL)
                         .color(SextantTheme::TEXT_DISABLED),
                 );

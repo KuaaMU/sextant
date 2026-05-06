@@ -117,7 +117,7 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
                     .color(Color32::from_rgba_premultiplied(0x3a, 0x7b, 0xd5, 0x15))
                     .width(0.0)
                     .fill(baseline as f32)
-                    .fill_alpha(0.0);
+                    .fill_alpha(0.08);
                 plot_ui.line(fill_line);
             }
 
@@ -160,11 +160,12 @@ fn compute_volatility(state: &GuiState) -> f64 {
     }
     let n = prices.len().min(20);
     let start = prices.len() - n;
-    prices[start..]
-        .windows(2)
+    let windows = prices[start..].windows(2);
+    let count = n - 1;
+    windows
         .map(|w| ((w[1] - w[0]) / w[0]).abs())
         .sum::<f64>()
-        / n as f64
+        / count as f64
 }
 
 fn volatility_color(vol: f64) -> Color32 {

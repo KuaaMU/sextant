@@ -148,8 +148,13 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
             );
 
             // IR points
+            let denom = if ir_values.len() <= 1 {
+                1.0
+            } else {
+                (ir_values.len() - 1) as f32
+            };
             for (i, ir) in ir_values.iter().enumerate() {
-                let x = rect.min.x + (i as f32 / (ir_values.len().max(1) - 1) as f32) * rect.width();
+                let x = rect.min.x + (i as f32 / denom) * rect.width();
                 let y = rect.max.y - ((ir - min_ir) / range) as f32 * height;
                 let color = if *ir >= baseline_ir {
                     SextantTheme::GREEN

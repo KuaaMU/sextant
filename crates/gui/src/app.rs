@@ -9,6 +9,7 @@
 //! Secondary panels (Orders, Research, Memory, Hull Integrity)
 //! are available as drawers, toggled by keyboard shortcuts.
 
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -268,6 +269,23 @@ pub struct IntentCard {
     pub confidence_label: String,
 }
 
+/// Commands sent from GUI back to the engine.
+#[derive(Clone, Debug)]
+pub enum GuiCommand {
+    ApproveIntent { intent_id: String },
+    RejectIntent { intent_id: String, reason: String },
+    SetEStop(bool),
+    SetAutonomy(Autonomy),
+}
+
+/// Execution log sub-tab state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionLogTab {
+    Execution,
+    Evolution,
+    Backtest,
+}
+
 /// Shared GUI state updated each frame.
 pub struct GuiState {
     pub context: Option<ContextWindow>,
@@ -291,6 +309,12 @@ pub struct GuiState {
     pub e_stopped: bool,
     // Open drawer
     pub open_drawer: Option<Drawer>,
+    // GUI → engine command channel
+    pub cmd_tx: Option<mpsc::Sender<GuiCommand>>,
+    // Persistent strategy parameters (agent_id → param_name → value)
+    pub strategy_params: HashMap<String, HashMap<String, f64>>,
+    // Execution log sub-tab
+    pub execution_log_tab: ExecutionLogTab,
 }
 
 impl Default for GuiState {
@@ -336,6 +360,9 @@ impl Default for GuiState {
             autonomy: Autonomy::Assisted,
             e_stopped: false,
             open_drawer: None,
+            cmd_tx: None,
+            strategy_params: HashMap::new(),
+            execution_log_tab: ExecutionLogTab::Execution,
         }
     }
 }
@@ -372,29 +399,33 @@ impl GuiState {
                 SextantEvent::RiskAlert { .. } => {
                     self.risk_events.push(event);
                 }
-                SextantEvent::IntentGenerated { .. } => {
-                    // Convert to intent card
-                    if let SextantEvent::IntentGenerated {
-                        agent_id,
-                        title,
-                        reasoning,
-                        confidence,
-                        confidence_label,
-                        ..
-                    } = &self.intent_events.last().cloned().unwrap_or(event.clone())
+                SextantEvent::IntentGenerated {
+                    agent_id,
+                    intent_type,
+                    title,
+                    reasoning,
+                    confidence,
+                    confidence_label,
+                    ..
+                } => {
+                    let side = if intent_type.to_lowercase().contains("sell")
+                        || intent_type.to_lowercase().contains("short")
                     {
-                        self.intent_cards.push(IntentCard {
-                            intent_id: format!("INT-{}", self.intent_cards.len()),
-                            agent_id: agent_id.clone(),
-                            title: title.clone(),
-                            reasoning: reasoning.clone(),
-                            side: "BUY".into(), // TODO: extract from intent
-                            quantity: 0.01,
-                            price: None,
-                            confidence: *confidence,
-                            confidence_label: confidence_label.clone(),
-                        });
-                    }
+                        "SELL"
+                    } else {
+                        "BUY"
+                    };
+                    self.intent_cards.push(IntentCard {
+                        intent_id: format!("INT-{}", self.intent_cards.len()),
+                        agent_id: agent_id.clone(),
+                        title: title.clone(),
+                        reasoning: reasoning.clone(),
+                        side: side.into(),
+                        quantity: 0.01,
+                        price: None,
+                        confidence: *confidence,
+                        confidence_label: confidence_label.clone(),
+                    });
                     self.intent_events.push(event);
                 }
                 SextantEvent::IntentApproved { .. }
@@ -597,7 +628,7 @@ impl eframe::App for SextantApp {
         );
 
         // ── Right: Intent card slot ───────────────────────────
-        let intent_width = if self.state.intent_cards.is_empty() {
+        let intent_width = if self.state.intent_cards.is_empty() || self.state.open_drawer.is_some() {
             0.0
         } else {
             320.0
@@ -671,7 +702,7 @@ impl eframe::App for SextantApp {
 
         // Render drawer overlay
         if let Some(drawer) = self.state.open_drawer {
-            // Semi-transparent background
+            // Clickable background — click to close drawer
             let bg_rect = egui::Rect::from_min_size(
                 egui::pos2(screen.min.x, pnl_height),
                 Vec2::new(
@@ -679,22 +710,29 @@ impl eframe::App for SextantApp {
                     screen.height() - pnl_height - crew_height,
                 ),
             );
-            ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
-                egui::Id::new("drawer_bg"),
-            ))
-            .rect_filled(
-                bg_rect,
-                CornerRadius::ZERO,
-                Color32::from_rgba_premultiplied(0x0f, 0x11, 0x17, 0x80),
-            );
+            let bg_response = egui::Area::new(egui::Id::new("drawer_bg"))
+                .fixed_pos(bg_rect.min)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    ui.set_min_size(bg_rect.size());
+                    ui.set_max_size(bg_rect.size());
+                    ui.painter().rect_filled(
+                        bg_rect,
+                        CornerRadius::ZERO,
+                        Color32::from_rgba_premultiplied(0x0f, 0x11, 0x17, 0x80),
+                    );
+                });
+            if bg_response.response.clicked() {
+                self.state.open_drawer = None;
+            }
 
             egui::Area::new(egui::Id::new("drawer"))
                 .fixed_pos(drawer_rect.min)
+                .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     ui.set_min_size(drawer_rect.size());
                     ui.set_max_size(drawer_rect.size());
-                    panels::drawer::render(ui, &self.state, drawer);
+                    panels::drawer::render(ui, &mut self.state, drawer);
                 });
         }
 

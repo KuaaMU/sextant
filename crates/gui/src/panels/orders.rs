@@ -141,13 +141,6 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
                         .color(SextantTheme::YELLOW),
                 );
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new("j/k:navigate  Enter:detail  s:sort  f:filter")
-                        .font(SextantTheme::FONT_SMALL)
-                        .color(SextantTheme::TEXT_MUTED),
-                );
-            });
         });
     }
 }

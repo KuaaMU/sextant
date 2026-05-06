@@ -2,26 +2,19 @@
 //!
 //! Three sub-views: execution records, strategy evolution timeline, backtest results.
 
-use egui::{RichText, Vec2};
+use egui::RichText;
 
-use crate::app::GuiState;
+use crate::app::{ExecutionLogTab, GuiState};
 use crate::theme::SextantTheme;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SubTab {
-    Execution,
-    Evolution,
-    Backtest,
-}
-
-pub fn render(ui: &mut egui::Ui, state: &GuiState) {
-    // Sub-tab selector
-    let mut tab = SubTab::Execution;
+pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
+    // Sub-tab selector — reads/writes persistent state
+    let mut tab = state.execution_log_tab;
     ui.horizontal(|ui| {
         for (t, label) in [
-            (SubTab::Execution, "Execution"),
-            (SubTab::Evolution, "Evolution"),
-            (SubTab::Backtest, "Backtest"),
+            (ExecutionLogTab::Execution, "Execution"),
+            (ExecutionLogTab::Evolution, "Evolution"),
+            (ExecutionLogTab::Backtest, "Backtest"),
         ] {
             let color = if tab == t {
                 SextantTheme::CYAN
@@ -36,14 +29,15 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
             }
         }
     });
+    state.execution_log_tab = tab;
 
     SextantTheme::separator(ui);
     ui.add_space(8.0);
 
     match tab {
-        SubTab::Execution => render_execution(ui, state),
-        SubTab::Evolution => render_evolution(ui, state),
-        SubTab::Backtest => render_backtest(ui, state),
+        ExecutionLogTab::Execution => render_execution(ui, state),
+        ExecutionLogTab::Evolution => render_evolution(ui, state),
+        ExecutionLogTab::Backtest => render_backtest(ui, state),
     }
 }
 

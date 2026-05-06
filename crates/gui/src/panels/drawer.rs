@@ -7,7 +7,7 @@ use egui::{RichText, Vec2};
 use crate::app::{Drawer, GuiState};
 use crate::theme::SextantTheme;
 
-pub fn render(ui: &mut egui::Ui, state: &GuiState, drawer: Drawer) {
+pub fn render(ui: &mut egui::Ui, state: &mut GuiState, drawer: Drawer) {
     // Background
     SextantTheme::panel_frame().show(ui, |ui| {
         // Header with close hint
@@ -53,20 +53,29 @@ fn render_hull_integrity(ui: &mut egui::Ui, state: &GuiState) {
     );
     ui.add_space(8.0);
 
-    // Risk dimensions
-    let risk = state
+    // Risk dimensions — use actual greeks and risk fields from context
+    let (delta, gamma, vega, risk, pos_pot, dd_pot) = state
         .context
         .as_ref()
-        .map(|c| c.risk_potential)
-        .unwrap_or(0.0);
+        .map(|c| {
+            (
+                c.greeks.delta.abs(),
+                c.greeks.gamma.abs(),
+                c.greeks.vega.abs(),
+                c.risk_potential,
+                c.position_potential,
+                c.drawdown_potential,
+            )
+        })
+        .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
 
     let dimensions = [
-        ("DELTA", risk, 0.8),
-        ("GAMMA", risk * 0.7, 0.7),
-        ("VEGA", risk * 0.5, 0.6),
-        ("LIQUIDITY", 0.3, 0.8),
-        ("CONCENTRATION", 0.2, 0.6),
-        ("LEVERAGE", 0.4, 0.7),
+        ("DELTA", delta, 0.8),
+        ("GAMMA", gamma, 0.7),
+        ("VEGA", vega, 0.6),
+        ("RISK", risk, 0.8),
+        ("POSITION", pos_pot, 0.6),
+        ("DRAWDOWN", dd_pot, 0.7),
     ];
 
     // 3x2 grid

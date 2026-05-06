@@ -179,13 +179,6 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
                 .color(SextantTheme::TEXT_MUTED),
         );
     }
-
-    ui.separator();
-    ui.label(
-        RichText::new("j/k:navigate  Enter:expand diff  r:trigger ratchet  h:history")
-            .font(SextantTheme::FONT_SMALL)
-            .color(SextantTheme::TEXT_MUTED),
-    );
 }
 
 struct Hypothesis {
@@ -217,7 +210,7 @@ fn compute_ratchet_stats(state: &GuiState) -> (f64, usize, usize) {
                 }
             }
         }
-        (latest_ir.max(0.5).min(3.0), accepted.max(1), rejected)
+        (latest_ir.max(0.5).min(3.0), accepted, rejected)
     } else if let Some(ref ctx) = state.context {
         // Fallback: IR derived from risk-adjusted return
         let ir = if state.price_history.prices.len() > 1 {
@@ -229,7 +222,7 @@ fn compute_ratchet_stats(state: &GuiState) -> (f64, usize, usize) {
                 .windows(2)
                 .map(|w| ((w[1] - w[0]) / w[0]).abs())
                 .sum::<f64>()
-                / prices.len() as f64;
+                / (prices.len() - 1) as f64;
             1.0 + ret / vol.max(0.0001)
         } else {
             1.0
