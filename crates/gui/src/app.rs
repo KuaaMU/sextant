@@ -315,6 +315,8 @@ pub struct GuiState {
     pub strategy_params: HashMap<String, HashMap<String, f64>>,
     // Execution log sub-tab
     pub execution_log_tab: ExecutionLogTab,
+    // Monotonic intent ID counter
+    next_intent_id: u64,
 }
 
 impl Default for GuiState {
@@ -363,6 +365,7 @@ impl Default for GuiState {
             cmd_tx: None,
             strategy_params: HashMap::new(),
             execution_log_tab: ExecutionLogTab::Execution,
+            next_intent_id: 0,
         }
     }
 }
@@ -415,8 +418,10 @@ impl GuiState {
                     } else {
                         "BUY"
                     };
+                    let id = format!("INT-{}", self.next_intent_id);
+                    self.next_intent_id += 1;
                     self.intent_cards.push(IntentCard {
-                        intent_id: format!("INT-{}", self.intent_cards.len()),
+                        intent_id: id,
                         agent_id: agent_id.clone(),
                         title: title.clone(),
                         reasoning: reasoning.clone(),
@@ -428,8 +433,12 @@ impl GuiState {
                     });
                     self.intent_events.push(event);
                 }
-                SextantEvent::IntentApproved { .. }
-                | SextantEvent::IntentRejected { .. } => {
+                SextantEvent::IntentApproved { intent_id, .. } => {
+                    self.intent_cards.retain(|c| c.intent_id != *intent_id);
+                    self.intent_events.push(event);
+                }
+                SextantEvent::IntentRejected { intent_id, .. } => {
+                    self.intent_cards.retain(|c| c.intent_id != *intent_id);
                     self.intent_events.push(event);
                 }
             }
@@ -689,8 +698,8 @@ impl eframe::App for SextantApp {
                 panels::crew_status::render(ui, &mut self.state);
             });
 
-        // Render intent cards
-        if !self.state.intent_cards.is_empty() {
+        // Render intent cards (hidden when drawer is open)
+        if !self.state.intent_cards.is_empty() && self.state.open_drawer.is_none() {
             egui::Area::new(egui::Id::new("intent_cards"))
                 .fixed_pos(intent_rect.min)
                 .show(ctx, |ui| {

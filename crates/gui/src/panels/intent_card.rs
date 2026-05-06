@@ -5,7 +5,7 @@
 
 use egui::{Color32, CornerRadius, RichText, Stroke, Vec2};
 
-use crate::app::GuiState;
+use crate::app::{GuiCommand, GuiState};
 use crate::theme::SextantTheme;
 
 pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
@@ -18,8 +18,8 @@ pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
     );
     ui.add_space(4.0);
 
-    // Render cards (collect indices to dismiss after)
-    let mut dismiss_idx = None;
+    // Track which cards to dismiss
+    let mut dismiss: Option<(usize, bool)> = None; // (index, approved)
 
     for (i, card) in state.intent_cards.iter().enumerate() {
         let border_color = if card.side == "BUY" {
@@ -30,12 +30,12 @@ pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
 
         egui::Frame::new()
             .fill(SextantTheme::BG_ELEVATED)
-            .corner_radius(CornerRadius::same(6))
+            .corner_radius(CornerRadius::same(8))
             .stroke(Stroke::new(1.0, border_color))
             .inner_margin(Vec2::new(12.0, 10.0))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    // Agent + title
+                    // Agent + confidence
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(&card.agent_id)
@@ -120,15 +120,6 @@ pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
                         .fill(SextantTheme::GREEN)
                         .corner_radius(CornerRadius::same(4));
 
-                        let modify_btn = egui::Button::new(
-                            RichText::new("MODIFY")
-                                .font(SextantTheme::FONT_SMALL)
-                                .color(SextantTheme::TEXT_PRIMARY),
-                        )
-                        .fill(SextantTheme::BG_SURFACE)
-                        .corner_radius(CornerRadius::same(4))
-                        .stroke(Stroke::new(1.0, SextantTheme::BORDER_SUBTLE));
-
                         let reject_btn = egui::Button::new(
                             RichText::new("REJECT")
                                 .font(SextantTheme::FONT_SMALL)
@@ -139,13 +130,10 @@ pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
                         .stroke(Stroke::new(1.0, SextantTheme::RED));
 
                         if ui.add(approve_btn).clicked() {
-                            dismiss_idx = Some(i);
-                        }
-                        if ui.add(modify_btn).clicked() {
-                            // TODO: open modify dialog
+                            dismiss = Some((i, true));
                         }
                         if ui.add(reject_btn).clicked() {
-                            dismiss_idx = Some(i);
+                            dismiss = Some((i, false));
                         }
                     });
                 });
@@ -154,8 +142,23 @@ pub fn render(ui: &mut egui::Ui, state: &mut GuiState) {
         ui.add_space(6.0);
     }
 
-    // Dismiss approved/rejected card
-    if let Some(idx) = dismiss_idx {
-        state.dismiss_intent(idx);
+    // Dismiss and send command
+    if let Some((idx, approved)) = dismiss {
+        if idx < state.intent_cards.len() {
+            let intent_id = state.intent_cards[idx].intent_id.clone();
+            if let Some(tx) = &state.cmd_tx {
+                if approved {
+                    let _ = tx.send(GuiCommand::ApproveIntent {
+                        intent_id: intent_id.clone(),
+                    });
+                } else {
+                    let _ = tx.send(GuiCommand::RejectIntent {
+                        intent_id: intent_id.clone(),
+                        reason: "User rejected".into(),
+                    });
+                }
+            }
+            state.dismiss_intent(idx);
+        }
     }
 }

@@ -216,13 +216,14 @@ fn derive_orders(state: &GuiState) -> Vec<Order> {
         let instrument = ctx.instrument_id_str().to_string();
         let mut order_id = 1;
 
+        let mut prev_pos = 0.0;
         for evt in util::events(ctx) {
             if evt.event_type == 2 {
-                // Fill
-                let side = if evt.price > 0.0 { "BUY" } else { "SELL" };
+                // Fill — derive side from position change
+                let side = if evt.size > prev_pos { "BUY" } else { "SELL" };
                 let price_str = format!("{:.2}", evt.price.abs());
-                let qty_str = format!("{:.1}", evt.size.abs());
-                let slip_bps = ((evt.price.abs() * 0.0001 + 0.5) * 10.0).round() / 10.0;
+                let qty_str = format!("{:.4}", evt.size.abs());
+                prev_pos = evt.size;
 
                 orders.push(Order {
                     id: format!("#{:03}", order_id),
@@ -231,7 +232,7 @@ fn derive_orders(state: &GuiState) -> Vec<Order> {
                     qty: qty_str,
                     price: price_str,
                     status: "FILL",
-                    slippage: format!("{:.1}bps", slip_bps),
+                    slippage: "--".into(),
                     status_color: SextantTheme::FILL,
                 });
                 order_id += 1;

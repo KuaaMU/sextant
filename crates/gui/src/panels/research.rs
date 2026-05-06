@@ -89,10 +89,11 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState) {
                     })
                     .collect();
 
+                let min_ir = points.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
                 let line = egui_plot::Line::new(points)
                     .color(SextantTheme::GREEN)
                     .width(2.0)
-                    .fill(0.0)
+                    .fill((min_ir * 0.99) as f32)
                     .fill_alpha(0.08);
                 plot_ui.line(line);
 

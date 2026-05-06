@@ -1,7 +1,7 @@
-//! Sextant bridge viewport theme — calm dark palette.
+//! Sextant bridge viewport theme — nautical deep-ocean palette.
 //!
-//! Deep navy backgrounds, muted accents, generous whitespace.
-//! Bloomberg terminal meets submarine bridge.
+//! Deep navy backgrounds, ocean cyan accent, calm emerald/rose data colors.
+//! Inspired by TradingView dark + Tailwind slate + nautical identity.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Stroke, Vec2};
 
@@ -9,18 +9,20 @@ pub struct SextantTheme;
 
 #[allow(dead_code)]
 impl SextantTheme {
-    // Background layers (deep → surface)
-    pub const BG_DEEP: Color32 = Color32::from_rgb(0x0f, 0x11, 0x17);
-    pub const BG_BASE: Color32 = Color32::from_rgb(0x15, 0x17, 0x1f);
-    pub const BG_SURFACE: Color32 = Color32::from_rgb(0x1c, 0x1e, 0x28);
-    pub const BG_ELEVATED: Color32 = Color32::from_rgb(0x24, 0x26, 0x32);
+    // Background layers — deep ocean navy (not gray)
+    pub const BG_DEEP: Color32 = Color32::from_rgb(0x0B, 0x11, 0x20);   // #0B1120 deep ocean
+    pub const BG_BASE: Color32 = Color32::from_rgb(0x11, 0x18, 0x27);   // #111827 dark slate
+    pub const BG_SURFACE: Color32 = Color32::from_rgb(0x1F, 0x29, 0x37); // #1F2937 card bg
+    pub const BG_ELEVATED: Color32 = Color32::from_rgb(0x37, 0x41, 0x51); // #374151 hover/popover
 
-    // Accent — visible on dark backgrounds
-    pub const CYAN: Color32 = Color32::from_rgb(0x6b, 0xad, 0xe8);     // bright steel blue
-    pub const MAGENTA: Color32 = Color32::from_rgb(0xd4, 0x7b, 0x9a);  // rose
-    pub const YELLOW: Color32 = Color32::from_rgb(0xe8, 0xb8, 0x5a);   // warm amber
-    pub const GREEN: Color32 = Color32::from_rgb(0x6a, 0xc4, 0x8a);    // fresh green
-    pub const RED: Color32 = Color32::from_rgb(0xe8, 0x6b, 0x6b);      // clear red
+    // Accent — ocean cyan + AI violet
+    pub const CYAN: Color32 = Color32::from_rgb(0x06, 0xB6, 0xD4);     // #06B6D4 ocean/primary accent
+    pub const VIOLET: Color32 = Color32::from_rgb(0x8B, 0x5C, 0xF6);   // #8B5CF6 AI/agent accent
+    pub const MAGENTA: Color32 = Color32::from_rgb(0xD4, 0x7B, 0x9a);  // rose (kept)
+    pub const YELLOW: Color32 = Color32::from_rgb(0xF5, 0x9E, 0x0B);   // #F59E0B amber warning
+    pub const GREEN: Color32 = Color32::from_rgb(0x10, 0xB9, 0x81);    // #10B981 emerald positive
+    pub const RED: Color32 = Color32::from_rgb(0xEF, 0x44, 0x44);      // #EF4444 red negative
+    pub const BLUE: Color32 = Color32::from_rgb(0x3B, 0x82, 0xF6);     // #3B82F6 blue info
 
     // Semantic
     pub const BUY: Color32 = Self::GREEN;
@@ -28,7 +30,7 @@ impl SextantTheme {
     pub const OK: Color32 = Self::GREEN;
     pub const WARN: Color32 = Self::YELLOW;
     pub const ALERT: Color32 = Self::RED;
-    pub const INFO: Color32 = Self::CYAN;
+    pub const INFO: Color32 = Self::BLUE;
 
     // Order status
     pub const FILL: Color32 = Self::GREEN;
@@ -37,20 +39,20 @@ impl SextantTheme {
     pub const PENDING: Color32 = Self::TEXT_MUTED;
     pub const DENY: Color32 = Self::RED;
 
-    // Text hierarchy — high contrast on dark backgrounds
-    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xe8, 0xea, 0xf0);   // near-white
-    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xa8, 0xaa, 0xb4); // light gray
-    pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x76, 0x78, 0x82);     // medium gray
-    pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x4e, 0x50, 0x5a);  // dim but visible
+    // Text hierarchy — high contrast on deep navy
+    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xF9, 0xFA, 0xFB);   // #F9FAFB near-white
+    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0x9C, 0xA3, 0xAF); // #9CA3AF gray-400
+    pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x6B, 0x72, 0x80);     // #6B7280 gray-500
+    pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x4B, 0x55, 0x63);  // #4B5563 gray-600
 
     // Borders
-    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x32, 0x34, 0x40);
-    pub const BORDER_GLOW: Color32 = Color32::from_rgba_premultiplied(0x6b, 0xad, 0xe8, 0x20);
+    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x37, 0x41, 0x51); // #374151 matches elevated
+    pub const BORDER_GLOW: Color32 = Color32::from_rgba_premultiplied(0x06, 0xB6, 0xD4, 0x30);
 
     // Sea chart specific
-    pub const SEA_WARM: Color32 = Color32::from_rgb(0xe8, 0x6b, 0x6b);   // high vol
-    pub const SEA_COOL: Color32 = Color32::from_rgb(0x4a, 0x8b, 0xe8);   // low vol
-    pub const SEA_CURRENT: Color32 = Color32::from_rgb(0x6b, 0xad, 0xe8); // liquidity flow
+    pub const SEA_WARM: Color32 = Color32::from_rgb(0xEF, 0x44, 0x44);   // high vol
+    pub const SEA_COOL: Color32 = Color32::from_rgb(0x06, 0xB6, 0xD4);   // low vol (cyan)
+    pub const SEA_CURRENT: Color32 = Color32::from_rgb(0x3B, 0x82, 0xF6); // liquidity flow (blue)
 
     // Backwards-compat aliases
     pub const TEXT: Color32 = Self::TEXT_PRIMARY;
@@ -83,10 +85,10 @@ impl SextantTheme {
         style.visuals.faint_bg_color = Self::BG_SURFACE;
         style.visuals.override_text_color = Some(Self::TEXT_PRIMARY);
 
-        style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(0x5b, 0x9b, 0xd5, 0x30);
+        style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(0x06, 0xB6, 0xD4, 0x30);
         style.visuals.selection.stroke = Stroke::new(1.0, Self::CYAN);
 
-        let r = CornerRadius::same(4);
+        let r = CornerRadius::same(6);
 
         style.visuals.widgets.noninteractive.bg_fill = Self::BG_SURFACE;
         style.visuals.widgets.noninteractive.weak_bg_fill = Self::BG_SURFACE;
@@ -118,9 +120,9 @@ impl SextantTheme {
         style.visuals.widgets.open.fg_stroke = Stroke::new(1.0, Self::TEXT_PRIMARY);
         style.visuals.widgets.open.corner_radius = r;
 
-        // Spacing — generous
+        // Spacing — generous, 4px base unit
         style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-        style.spacing.button_padding = Vec2::new(10.0, 6.0);
+        style.spacing.button_padding = Vec2::new(12.0, 6.0);
         style.spacing.window_margin = Margin::same(16);
         style.spacing.indent = 24.0;
 
@@ -134,30 +136,33 @@ impl SextantTheme {
     pub fn panel_frame() -> egui::Frame {
         egui::Frame::new()
             .fill(Self::BG_SURFACE)
-            .corner_radius(CornerRadius::same(6))
+            .corner_radius(CornerRadius::same(8))
             .stroke(Stroke::NONE)
-            .inner_margin(Margin::same(12))
+            .inner_margin(Margin::same(16))
     }
 
     pub fn elevated_frame() -> egui::Frame {
         egui::Frame::new()
             .fill(Self::BG_ELEVATED)
-            .corner_radius(CornerRadius::same(6))
+            .corner_radius(CornerRadius::same(8))
             .stroke(Stroke::NONE)
-            .inner_margin(Margin::same(12))
+            .inner_margin(Margin::same(16))
     }
 
     pub fn accent_frame(accent: Color32) -> egui::Frame {
         egui::Frame::new()
             .fill(Self::BG_ELEVATED)
-            .corner_radius(CornerRadius::same(4))
+            .corner_radius(CornerRadius::same(8))
             .stroke(Stroke::new(1.0, accent))
-            .inner_margin(Margin::symmetric(10, 6))
+            .inner_margin(Margin::symmetric(12, 8))
     }
 
-    /// Status dot — small circle indicator.
+    /// Status dot — small circle indicator with optional glow.
     pub fn status_dot(ui: &mut egui::Ui, color: Color32) {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), egui::Sense::hover());
+        // Subtle glow behind the dot
+        let glow = Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), 40);
+        ui.painter().circle_filled(rect.center(), 6.0, glow);
         ui.painter().circle_filled(rect.center(), 4.0, color);
     }
 

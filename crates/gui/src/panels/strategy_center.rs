@@ -2,7 +2,7 @@
 //!
 //! Manage agent strategies, adjust parameters, view performance stats.
 
-use egui::{RichText, Vec2};
+use egui::RichText;
 
 use crate::app::GuiState;
 use crate::theme::SextantTheme;
