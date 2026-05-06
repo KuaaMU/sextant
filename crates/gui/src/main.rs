@@ -4,6 +4,7 @@
 
 mod app;
 mod data;
+mod painter;
 mod panels;
 mod theme;
 mod util;
