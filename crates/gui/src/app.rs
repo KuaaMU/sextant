@@ -28,6 +28,9 @@ pub enum Drawer {
     Research,
     Memory,
     HullIntegrity,
+    StrategyCenter,
+    ExecutionLog,
+    ResearchLab,
 }
 
 impl Drawer {
@@ -37,6 +40,9 @@ impl Drawer {
             Self::Research => "Research",
             Self::Memory => "Memory",
             Self::HullIntegrity => "Hull Integrity",
+            Self::StrategyCenter => "策略工坊",
+            Self::ExecutionLog => "航海日志",
+            Self::ResearchLab => "研究室",
         }
     }
 }
@@ -548,6 +554,24 @@ impl eframe::App for SextantApp {
                 self.state.open_drawer = match self.state.open_drawer {
                     Some(Drawer::HullIntegrity) => None,
                     _ => Some(Drawer::HullIntegrity),
+                };
+            }
+            if i.key_pressed(egui::Key::Num5) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::StrategyCenter) => None,
+                    _ => Some(Drawer::StrategyCenter),
+                };
+            }
+            if i.key_pressed(egui::Key::Num6) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::ExecutionLog) => None,
+                    _ => Some(Drawer::ExecutionLog),
+                };
+            }
+            if i.key_pressed(egui::Key::Num7) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::ResearchLab) => None,
+                    _ => Some(Drawer::ResearchLab),
                 };
             }
             if i.key_pressed(egui::Key::Escape) {

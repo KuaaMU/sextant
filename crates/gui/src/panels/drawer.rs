@@ -36,6 +36,9 @@ pub fn render(ui: &mut egui::Ui, state: &GuiState, drawer: Drawer) {
             Drawer::Research => super::research::render(ui, state),
             Drawer::Memory => super::memory::render(ui, state),
             Drawer::HullIntegrity => render_hull_integrity(ui, state),
+            Drawer::StrategyCenter => super::strategy_center::render(ui, state),
+            Drawer::ExecutionLog => super::execution_log::render(ui, state),
+            Drawer::ResearchLab => super::research_lab::render(ui, state),
         }
     });
 }

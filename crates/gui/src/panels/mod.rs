@@ -1,8 +1,11 @@
 pub mod crew_status;
 pub mod drawer;
+pub mod execution_log;
 pub mod intent_card;
 pub mod memory;
 pub mod orders;
 pub mod pnl_strip;
 pub mod research;
+pub mod research_lab;
 pub mod sea_chart;
+pub mod strategy_center;
