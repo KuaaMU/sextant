@@ -1,10 +1,18 @@
-//! Application state and egui_dock TabViewer implementation.
+//! Application state — bridge viewport layout.
+//!
+//! Layout:
+//!   Top:    PnL strip (position, PnL, command input)
+//!   Center: Sea chart (flowing liquidity/volatility)
+//!   Right:  Intent card slot (empty or card)
+//!   Bottom: Crew status bar (agent cells)
+//!
+//! Secondary panels (Orders, Research, Memory, Hull Integrity)
+//! are available as drawers, toggled by keyboard shortcuts.
 
 use std::sync::mpsc;
 use std::time::Duration;
 
-use egui::{Color32, FontFamily, FontId, RichText};
-use egui_dock::{DockState, NodeIndex, TabViewer};
+use egui::{Color32, CornerRadius, Vec2};
 
 use nautilus_state_encoder::{ContextWindow, SextantEvent};
 
@@ -13,38 +21,48 @@ use crate::panels;
 use crate::theme::SextantTheme;
 use crate::DataPayload;
 
-/// Which panel tab is active.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Tab {
-    Market,
-    AgentLog,
-    Risk,
+/// Which drawer is open (if any).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drawer {
     Orders,
     Research,
     Memory,
+    HullIntegrity,
 }
 
-impl Tab {
+impl Drawer {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Market => "[1] Market",
-            Self::AgentLog => "[2] AgentLog",
-            Self::Risk => "[3] Risk",
-            Self::Orders => "[4] Orders",
-            Self::Research => "[5] Research",
-            Self::Memory => "[6] Memory",
+            Self::Orders => "Orders",
+            Self::Research => "Research",
+            Self::Memory => "Memory",
+            Self::HullIntegrity => "Hull Integrity",
+        }
+    }
+}
+
+/// Autonomy level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Autonomy {
+    Manual,
+    Assisted,
+    Auto,
+}
+
+impl Autonomy {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "MANUAL",
+            Self::Assisted => "ASSISTED",
+            Self::Auto => "AUTO",
         }
     }
 
-    fn from_number(n: u8) -> Option<Self> {
-        match n {
-            1 => Some(Self::Market),
-            2 => Some(Self::AgentLog),
-            3 => Some(Self::Risk),
-            4 => Some(Self::Orders),
-            5 => Some(Self::Research),
-            6 => Some(Self::Memory),
-            _ => None,
+    pub fn color(self) -> Color32 {
+        match self {
+            Self::Manual => SextantTheme::TEXT_SECONDARY,
+            Self::Assisted => SextantTheme::YELLOW,
+            Self::Auto => SextantTheme::GREEN,
         }
     }
 }
@@ -71,12 +89,11 @@ impl PriceHistory {
     }
 }
 
-/// OHLCV bar accumulator — groups N price ticks into one candlestick bar.
+/// OHLCV bar accumulator.
 pub struct OhlcvAccumulator {
     pub bars: Vec<OhlcvBar>,
     pub max_len: usize,
     pub group_size: usize,
-    // Current bar state
     open: f64,
     high: f64,
     low: f64,
@@ -111,7 +128,6 @@ impl OhlcvAccumulator {
         }
     }
 
-    /// Feed a new price tick. Returns `Some(bar)` when a bar is completed.
     pub fn push(&mut self, price: f64, volume: f64) -> Option<OhlcvBar> {
         if self.tick_count == 0 {
             self.open = price;
@@ -134,30 +150,12 @@ impl OhlcvAccumulator {
                 close: self.close,
                 volume: self.volume,
             };
-            // Ring buffer eviction
             if self.bars.len() >= self.max_len {
                 self.bars.remove(0);
             }
             self.bars.push(bar.clone());
             self.tick_count = 0;
             Some(bar)
-        } else {
-            None
-        }
-    }
-
-    /// Get the current incomplete bar (open/high/low/close so far).
-    #[allow(dead_code)]
-    pub fn current(&self) -> Option<OhlcvBar> {
-        if self.tick_count > 0 {
-            Some(OhlcvBar {
-                time: chrono::Utc::now(),
-                open: self.open,
-                high: self.high,
-                low: self.low,
-                close: self.close,
-                volume: self.volume,
-            })
         } else {
             None
         }
@@ -173,7 +171,6 @@ pub struct LogEntry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum AgentType {
     Perception,
     Strategy,
@@ -184,10 +181,10 @@ pub enum AgentType {
 impl AgentType {
     pub fn color(self) -> Color32 {
         match self {
-            Self::Perception => Color32::from_rgb(0xc0, 0x60, 0xff),
+            Self::Perception => SextantTheme::CYAN,
             Self::Strategy => SextantTheme::YELLOW,
             Self::Risk => SextantTheme::RED,
-            Self::Execution => SextantTheme::CYAN,
+            Self::Execution => SextantTheme::GREEN,
         }
     }
 
@@ -223,6 +220,48 @@ impl From<data::LogEntry> for LogEntry {
     }
 }
 
+/// Agent state for the crew status bar.
+#[derive(Clone, Debug)]
+pub struct AgentState {
+    pub id: String,
+    pub agent_type: AgentType,
+    pub status: AgentStatus,
+    pub task: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentStatus {
+    Active,  // green
+    Busy,    // yellow
+    Alert,   // red
+    Idle,    // muted
+}
+
+impl AgentStatus {
+    pub fn color(self) -> Color32 {
+        match self {
+            Self::Active => SextantTheme::GREEN,
+            Self::Busy => SextantTheme::YELLOW,
+            Self::Alert => SextantTheme::RED,
+            Self::Idle => SextantTheme::TEXT_MUTED,
+        }
+    }
+}
+
+/// Intent card — agent wants to trade.
+#[derive(Clone, Debug)]
+pub struct IntentCard {
+    pub intent_id: String,
+    pub agent_id: String,
+    pub title: String,
+    pub reasoning: String,
+    pub side: String,      // "BUY" / "SELL"
+    pub quantity: f64,
+    pub price: Option<f64>,
+    pub confidence: f64,
+    pub confidence_label: String,
+}
+
 /// Shared GUI state updated each frame.
 pub struct GuiState {
     pub context: Option<ContextWindow>,
@@ -231,11 +270,21 @@ pub struct GuiState {
     pub log_entries: Vec<LogEntry>,
     pub current_price: f64,
     pub last_version: u64,
-    // Extended events (from --events mmap)
+    // Extended events
     pub order_events: Vec<SextantEvent>,
     pub research_events: Vec<SextantEvent>,
     pub risk_events: Vec<SextantEvent>,
     pub intent_events: Vec<SextantEvent>,
+    // Crew state
+    pub agents: Vec<AgentState>,
+    // Intent cards
+    pub intent_cards: Vec<IntentCard>,
+    // Autonomy
+    pub autonomy: Autonomy,
+    // E-Stop
+    pub e_stopped: bool,
+    // Open drawer
+    pub open_drawer: Option<Drawer>,
 }
 
 impl Default for GuiState {
@@ -243,7 +292,7 @@ impl Default for GuiState {
         Self {
             context: None,
             price_history: PriceHistory::new(600),
-            ohlcv: OhlcvAccumulator::new(10, 200), // 10 ticks per bar, 200 bars max
+            ohlcv: OhlcvAccumulator::new(10, 200),
             log_entries: Vec::new(),
             current_price: 150.0,
             last_version: 0,
@@ -251,6 +300,36 @@ impl Default for GuiState {
             research_events: Vec::new(),
             risk_events: Vec::new(),
             intent_events: Vec::new(),
+            agents: vec![
+                AgentState {
+                    id: "momentum-01".into(),
+                    agent_type: AgentType::Strategy,
+                    status: AgentStatus::Idle,
+                    task: "Waiting for data...".into(),
+                },
+                AgentState {
+                    id: "mean-rev-01".into(),
+                    agent_type: AgentType::Strategy,
+                    status: AgentStatus::Idle,
+                    task: "Waiting for data...".into(),
+                },
+                AgentState {
+                    id: "risk-01".into(),
+                    agent_type: AgentType::Risk,
+                    status: AgentStatus::Idle,
+                    task: "Monitoring...".into(),
+                },
+                AgentState {
+                    id: "perception".into(),
+                    agent_type: AgentType::Perception,
+                    status: AgentStatus::Idle,
+                    task: "Idle".into(),
+                },
+            ],
+            intent_cards: Vec::new(),
+            autonomy: Autonomy::Assisted,
+            e_stopped: false,
+            open_drawer: None,
         }
     }
 }
@@ -273,7 +352,7 @@ impl GuiState {
             self.log_entries.drain(..drain);
         }
 
-        // Sort extended events by type, bounded to last 256 each
+        // Sort extended events by type
         for event in payload.events {
             match &event {
                 SextantEvent::OrderSubmitted { .. }
@@ -287,14 +366,37 @@ impl GuiState {
                 SextantEvent::RiskAlert { .. } => {
                     self.risk_events.push(event);
                 }
-                SextantEvent::IntentGenerated { .. }
-                | SextantEvent::IntentApproved { .. }
+                SextantEvent::IntentGenerated { .. } => {
+                    // Convert to intent card
+                    if let SextantEvent::IntentGenerated {
+                        agent_id,
+                        title,
+                        reasoning,
+                        confidence,
+                        confidence_label,
+                        ..
+                    } = &self.intent_events.last().cloned().unwrap_or(event.clone())
+                    {
+                        self.intent_cards.push(IntentCard {
+                            intent_id: format!("INT-{}", self.intent_cards.len()),
+                            agent_id: agent_id.clone(),
+                            title: title.clone(),
+                            reasoning: reasoning.clone(),
+                            side: "BUY".into(), // TODO: extract from intent
+                            quantity: 0.01,
+                            price: None,
+                            confidence: *confidence,
+                            confidence_label: confidence_label.clone(),
+                        });
+                    }
+                    self.intent_events.push(event);
+                }
+                SextantEvent::IntentApproved { .. }
                 | SextantEvent::IntentRejected { .. } => {
                     self.intent_events.push(event);
                 }
             }
         }
-        // Bound each event list
         for list in [
             &mut self.order_events,
             &mut self.research_events,
@@ -305,6 +407,47 @@ impl GuiState {
                 let drain = list.len() - 256;
                 list.drain(..drain);
             }
+        }
+
+        // Update crew status based on latest events
+        self.update_crew_status();
+    }
+
+    fn update_crew_status(&mut self) {
+        // Update agent states based on recent activity
+        for agent in &mut self.agents {
+            if self.last_version > 0 {
+                agent.status = AgentStatus::Active;
+                match agent.agent_type {
+                    AgentType::Strategy => {
+                        agent.task = format!("Watching {:.0}", self.current_price);
+                    }
+                    AgentType::Risk => {
+                        let risk = self.context.as_ref()
+                            .map(|c| c.risk_potential)
+                            .unwrap_or(0.0);
+                        if risk > 0.8 {
+                            agent.status = AgentStatus::Alert;
+                            agent.task = format!("Risk: {:.0}%", risk * 100.0);
+                        } else if risk > 0.5 {
+                            agent.status = AgentStatus::Busy;
+                            agent.task = format!("Risk: {:.0}%", risk * 100.0);
+                        } else {
+                            agent.task = "Nominal".into();
+                        }
+                    }
+                    AgentType::Perception => {
+                        agent.task = "Processing quotes".into();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub fn dismiss_intent(&mut self, idx: usize) {
+        if idx < self.intent_cards.len() {
+            self.intent_cards.remove(idx);
         }
     }
 }
@@ -326,46 +469,23 @@ fn parse_mid_price(state: &str) -> Option<f64> {
 
 /// The main application.
 pub struct SextantApp {
-    pub dock_state: DockState<Tab>,
     pub state: GuiState,
     pub rx: mpsc::Receiver<DataPayload>,
-    pub dock_style: egui_dock::Style,
     pub fonts_loaded: bool,
 }
 
 impl SextantApp {
     pub fn new(rx: mpsc::Receiver<DataPayload>) -> Self {
-        let mut dock_state = DockState::new(vec![Tab::Market]);
-        let [left, _right] =
-            dock_state
-                .main_surface_mut()
-                .split_left(NodeIndex::root(), 0.3, vec![Tab::AgentLog]);
-        let [top_right, _bottom_right] =
-            dock_state
-                .main_surface_mut()
-                .split_right(left, 0.6, vec![Tab::Risk]);
-        let [mid_right, _bot_right] =
-            dock_state
-                .main_surface_mut()
-                .split_below(top_right, 0.5, vec![Tab::Orders]);
-        dock_state
-            .main_surface_mut()
-            .split_below(mid_right, 0.5, vec![Tab::Research]);
-
         Self {
-            dock_state,
             state: GuiState::default(),
             rx,
-            dock_style: SextantTheme::dock_style(),
             fonts_loaded: false,
         }
     }
 
-    /// Load system fonts on first frame.
     fn setup_fonts(&self, ctx: &egui::Context) {
         let mut fonts = egui::FontDefinitions::default();
 
-        // Try loading Consolas (Windows monospace)
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\consola.ttf") {
             fonts.font_data.insert(
                 "consolas".to_owned(),
@@ -376,7 +496,6 @@ impl SextantApp {
             }
         }
 
-        // Try loading Segoe UI (Windows proportional)
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf") {
             fonts.font_data.insert(
                 "segoeui".to_owned(),
@@ -389,45 +508,16 @@ impl SextantApp {
 
         ctx.set_fonts(fonts);
     }
-
-    /// Switch to a specific tab by number (1-6).
-    fn switch_to_tab(&mut self, tab: Tab) {
-        // Find which (surface, node) contains this tab
-        let found = self
-            .dock_state
-            .iter_all_tabs()
-            .find(|(_, t)| **t == tab)
-            .map(|((s, n), _)| (s, n));
-
-        if let Some((si, ni)) = found {
-            // Get the node from the surface's tree to find tab index
-            if let Some(tree) = self.dock_state.get_surface(si).and_then(|s| s.node_tree()) {
-                let node = &tree[ni];
-                if let Some(tabs) = node.tabs() {
-                    for (idx, t) in tabs.iter().enumerate() {
-                        if *t == tab {
-                            self.dock_state
-                                .set_active_tab((si, ni, egui_dock::TabIndex(idx)));
-                            self.dock_state
-                                .set_focused_node_and_surface((si, ni));
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl eframe::App for SextantApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Load fonts once on first frame
         if !self.fonts_loaded {
             self.setup_fonts(ctx);
             self.fonts_loaded = true;
         }
 
-        // Drain all pending data from the background thread
+        // Drain all pending data
         while let Ok(payload) = self.rx.try_recv() {
             self.state.update(payload);
         }
@@ -436,83 +526,163 @@ impl eframe::App for SextantApp {
 
         // Keyboard shortcuts
         ctx.input(|i| {
-            // Number keys 1-6 switch tabs
-            for n in 1..=6u8 {
-                let key = match n {
-                    1 => egui::Key::Num1,
-                    2 => egui::Key::Num2,
-                    3 => egui::Key::Num3,
-                    4 => egui::Key::Num4,
-                    5 => egui::Key::Num5,
-                    6 => egui::Key::Num6,
-                    _ => unreachable!(),
+            if i.key_pressed(egui::Key::Num1) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::Orders) => None,
+                    _ => Some(Drawer::Orders),
                 };
-                if i.key_pressed(key) {
-                    if let Some(tab) = Tab::from_number(n) {
-                        self.switch_to_tab(tab);
-                    }
-                }
             }
-
-            // Ctrl+R: reset layout to default
-            if i.key_pressed(egui::Key::R) && i.modifiers.ctrl {
-                let mut dock = DockState::new(vec![Tab::Market]);
-                let [left, _] = dock.main_surface_mut().split_left(
-                    NodeIndex::root(),
-                    0.3,
-                    vec![Tab::AgentLog],
-                );
-                let [top_right, _] = dock
-                    .main_surface_mut()
-                    .split_right(left, 0.6, vec![Tab::Risk]);
-                let [mid_right, _] = dock
-                    .main_surface_mut()
-                    .split_below(top_right, 0.5, vec![Tab::Orders]);
-                dock.main_surface_mut()
-                    .split_below(mid_right, 0.5, vec![Tab::Research]);
-                self.dock_state = dock;
+            if i.key_pressed(egui::Key::Num2) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::Research) => None,
+                    _ => Some(Drawer::Research),
+                };
+            }
+            if i.key_pressed(egui::Key::Num3) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::Memory) => None,
+                    _ => Some(Drawer::Memory),
+                };
+            }
+            if i.key_pressed(egui::Key::Num4) {
+                self.state.open_drawer = match self.state.open_drawer {
+                    Some(Drawer::HullIntegrity) => None,
+                    _ => Some(Drawer::HullIntegrity),
+                };
+            }
+            if i.key_pressed(egui::Key::Escape) {
+                self.state.open_drawer = None;
             }
         });
 
-        // Render dock with Cyberpunk-Terminal style
-        egui_dock::DockArea::new(&mut self.dock_state)
-            .style(self.dock_style.clone())
-            .show(ctx, &mut TabViewerImpl { state: &self.state });
+        // Layout
+        let screen = ctx.screen_rect();
 
-        // Request repaint to keep polling data
+        // ── Top: PnL strip ────────────────────────────────────
+        let pnl_height = 48.0;
+        let pnl_rect = egui::Rect::from_min_size(
+            screen.min,
+            Vec2::new(screen.width(), pnl_height),
+        );
+
+        // ── Bottom: Crew status bar ───────────────────────────
+        let crew_height = 52.0;
+        let crew_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.min.x, screen.max.y - crew_height),
+            Vec2::new(screen.width(), crew_height),
+        );
+
+        // ── Right: Intent card slot ───────────────────────────
+        let intent_width = if self.state.intent_cards.is_empty() {
+            0.0
+        } else {
+            320.0
+        };
+        let intent_rect = if intent_width > 0.0 {
+            egui::Rect::from_min_size(
+                egui::pos2(screen.max.x - intent_width, pnl_height),
+                Vec2::new(intent_width, screen.height() - pnl_height - crew_height),
+            )
+        } else {
+            egui::Rect::ZERO
+        };
+
+        // ── Center: Sea chart ─────────────────────────────────
+        let chart_rect = egui::Rect::from_min_size(
+            egui::pos2(screen.min.x, pnl_height),
+            Vec2::new(
+                screen.width() - intent_width,
+                screen.height() - pnl_height - crew_height,
+            ),
+        );
+
+        // ── Drawer (overlay from right) ───────────────────────
+        let drawer_width = 480.0;
+        let drawer_rect = if self.state.open_drawer.is_some() {
+            egui::Rect::from_min_size(
+                egui::pos2(screen.max.x - drawer_width, pnl_height),
+                Vec2::new(drawer_width, screen.height() - pnl_height - crew_height),
+            )
+        } else {
+            egui::Rect::ZERO
+        };
+
+        // Render PnL strip
+        egui::Area::new(egui::Id::new("pnl_strip"))
+            .fixed_pos(pnl_rect.min)
+            .show(ctx, |ui| {
+                ui.set_min_size(pnl_rect.size());
+                ui.set_max_size(pnl_rect.size());
+                panels::pnl_strip::render(ui, &self.state);
+            });
+
+        // Render sea chart
+        egui::Area::new(egui::Id::new("sea_chart"))
+            .fixed_pos(chart_rect.min)
+            .show(ctx, |ui| {
+                ui.set_min_size(chart_rect.size());
+                ui.set_max_size(chart_rect.size());
+                panels::sea_chart::render(ui, &self.state);
+            });
+
+        // Render crew status bar
+        egui::Area::new(egui::Id::new("crew_status"))
+            .fixed_pos(crew_rect.min)
+            .show(ctx, |ui| {
+                ui.set_min_size(crew_rect.size());
+                ui.set_max_size(crew_rect.size());
+                panels::crew_status::render(ui, &mut self.state);
+            });
+
+        // Render intent cards
+        if !self.state.intent_cards.is_empty() {
+            egui::Area::new(egui::Id::new("intent_cards"))
+                .fixed_pos(intent_rect.min)
+                .show(ctx, |ui| {
+                    ui.set_min_size(intent_rect.size());
+                    ui.set_max_size(intent_rect.size());
+                    panels::intent_card::render(ui, &mut self.state);
+                });
+        }
+
+        // Render drawer overlay
+        if let Some(drawer) = self.state.open_drawer {
+            // Semi-transparent background
+            let bg_rect = egui::Rect::from_min_size(
+                egui::pos2(screen.min.x, pnl_height),
+                Vec2::new(
+                    screen.width() - drawer_width,
+                    screen.height() - pnl_height - crew_height,
+                ),
+            );
+            ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("drawer_bg"),
+            ))
+            .rect_filled(
+                bg_rect,
+                CornerRadius::ZERO,
+                Color32::from_rgba_premultiplied(0x0f, 0x11, 0x17, 0x80),
+            );
+
+            egui::Area::new(egui::Id::new("drawer"))
+                .fixed_pos(drawer_rect.min)
+                .show(ctx, |ui| {
+                    ui.set_min_size(drawer_rect.size());
+                    ui.set_max_size(drawer_rect.size());
+                    panels::drawer::render(ui, &self.state, drawer);
+                });
+        }
+
         ctx.request_repaint();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "dock_state", &self.dock_state);
+        // Nothing to persist in the new layout
+        let _ = storage;
     }
 
     fn auto_save_interval(&self) -> Duration {
         Duration::from_secs(30)
-    }
-}
-
-struct TabViewerImpl<'a> {
-    state: &'a GuiState,
-}
-
-impl<'a> TabViewer for TabViewerImpl<'a> {
-    type Tab = Tab;
-
-    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        RichText::new(tab.label())
-            .font(FontId::new(12.0, FontFamily::Monospace))
-            .into()
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        match tab {
-            Tab::Market => panels::market::render(ui, self.state),
-            Tab::AgentLog => panels::agent_log::render(ui, self.state),
-            Tab::Risk => panels::risk::render(ui, self.state),
-            Tab::Orders => panels::orders::render(ui, self.state),
-            Tab::Research => panels::research::render(ui, self.state),
-            Tab::Memory => panels::memory::render(ui, self.state),
-        }
     }
 }

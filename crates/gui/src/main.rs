@@ -1,6 +1,6 @@
-//! Sextant GUI — egui desktop application.
+//! Sextant GUI — bridge viewport.
 //!
-//! Usage: sextant-gui [--mmap <path>]
+//! Usage: sextant-gui [--mmap <path>] [--events <path>]
 
 mod app;
 mod data;
@@ -42,8 +42,6 @@ fn main() {
     });
 
     // Background data thread → UI via mpsc
-    // Unbounded channel; UI drains all pending frames each tick (keeping latest).
-    // Adaptive polling backoff when no new data.
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
@@ -64,7 +62,6 @@ fn main() {
             }
         };
 
-        // Optional extended events source
         let mut ext_source: Option<ExtendedSource> = events_path.and_then(|p| {
             match ExtendedSource::open(&p) {
                 Ok(s) => {
@@ -78,10 +75,9 @@ fn main() {
             }
         });
 
-        // Adaptive polling: fast when data flows, back off when idle
-        let mut poll_interval = Duration::from_millis(8); // ~120Hz
+        let mut poll_interval = Duration::from_millis(8);
         let min_interval = Duration::from_millis(8);
-        let max_interval = Duration::from_millis(50); // ~20Hz minimum
+        let max_interval = Duration::from_millis(50);
 
         loop {
             if let Some(ctx) = source.try_read() {
@@ -93,7 +89,6 @@ fn main() {
                 let _ = tx.send(DataPayload { context: ctx, logs, events });
                 poll_interval = min_interval;
             } else {
-                // No new data — exponential backoff
                 poll_interval = (poll_interval * 2).min(max_interval);
             }
             thread::sleep(poll_interval);
@@ -111,22 +106,7 @@ fn main() {
     eframe::run_native(
         "Sextant",
         options,
-        Box::new(move |cc| {
-            // Restore persisted dock layout, always fresh receiver
-            let mut app = app::SextantApp::new(rx);
-            if let Some(storage) = cc.storage {
-                if let Some(saved) = eframe::get_value::<egui_dock::DockState<app::Tab>>(
-                    storage,
-                    "dock_state",
-                ) {
-                    // Only restore if it has tabs (prevent blank screen)
-                    if !saved.main_surface().is_empty() {
-                        app.dock_state = saved;
-                    }
-                }
-            }
-            Ok(Box::new(app))
-        }),
+        Box::new(move |_cc| Ok(Box::new(app::SextantApp::new(rx)))),
     )
     .expect("Failed to launch Sextant GUI");
 }
