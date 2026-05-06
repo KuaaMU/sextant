@@ -15,12 +15,12 @@ impl SextantTheme {
     pub const BG_SURFACE: Color32 = Color32::from_rgb(0x1c, 0x1e, 0x28);
     pub const BG_ELEVATED: Color32 = Color32::from_rgb(0x24, 0x26, 0x32);
 
-    // Accent — muted, not neon
-    pub const CYAN: Color32 = Color32::from_rgb(0x5b, 0x9b, 0xd5);     // steel blue
-    pub const MAGENTA: Color32 = Color32::from_rgb(0xc0, 0x6b, 0x8a);  // muted rose
-    pub const YELLOW: Color32 = Color32::from_rgb(0xd4, 0xa5, 0x4a);   // warm amber
-    pub const GREEN: Color32 = Color32::from_rgb(0x5a, 0xb0, 0x7a);    // muted green
-    pub const RED: Color32 = Color32::from_rgb(0xd4, 0x5b, 0x5b);      // muted red
+    // Accent — visible on dark backgrounds
+    pub const CYAN: Color32 = Color32::from_rgb(0x6b, 0xad, 0xe8);     // bright steel blue
+    pub const MAGENTA: Color32 = Color32::from_rgb(0xd4, 0x7b, 0x9a);  // rose
+    pub const YELLOW: Color32 = Color32::from_rgb(0xe8, 0xb8, 0x5a);   // warm amber
+    pub const GREEN: Color32 = Color32::from_rgb(0x6a, 0xc4, 0x8a);    // fresh green
+    pub const RED: Color32 = Color32::from_rgb(0xe8, 0x6b, 0x6b);      // clear red
 
     // Semantic
     pub const BUY: Color32 = Self::GREEN;
@@ -37,20 +37,20 @@ impl SextantTheme {
     pub const PENDING: Color32 = Self::TEXT_MUTED;
     pub const DENY: Color32 = Self::RED;
 
-    // Text hierarchy
-    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xd8, 0xda, 0xe0);
-    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0x8a, 0x8c, 0x96);
-    pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x55, 0x57, 0x62);
-    pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x3a, 0x3c, 0x45);
+    // Text hierarchy — high contrast on dark backgrounds
+    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xe8, 0xea, 0xf0);   // near-white
+    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xa8, 0xaa, 0xb4); // light gray
+    pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x76, 0x78, 0x82);     // medium gray
+    pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x4e, 0x50, 0x5a);  // dim but visible
 
     // Borders
-    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x28, 0x2a, 0x36);
-    pub const BORDER_GLOW: Color32 = Color32::from_rgba_premultiplied(0x5b, 0x9b, 0xd5, 0x20);
+    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x32, 0x34, 0x40);
+    pub const BORDER_GLOW: Color32 = Color32::from_rgba_premultiplied(0x6b, 0xad, 0xe8, 0x20);
 
     // Sea chart specific
-    pub const SEA_WARM: Color32 = Color32::from_rgb(0xd4, 0x5b, 0x5b);   // high vol
-    pub const SEA_COOL: Color32 = Color32::from_rgb(0x3a, 0x7b, 0xd5);   // low vol
-    pub const SEA_CURRENT: Color32 = Color32::from_rgb(0x5b, 0x9b, 0xd5); // liquidity flow
+    pub const SEA_WARM: Color32 = Color32::from_rgb(0xe8, 0x6b, 0x6b);   // high vol
+    pub const SEA_COOL: Color32 = Color32::from_rgb(0x4a, 0x8b, 0xe8);   // low vol
+    pub const SEA_CURRENT: Color32 = Color32::from_rgb(0x6b, 0xad, 0xe8); // liquidity flow
 
     // Backwards-compat aliases
     pub const TEXT: Color32 = Self::TEXT_PRIMARY;
