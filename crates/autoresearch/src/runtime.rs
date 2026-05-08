@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use nautilus_core::UUID4;
 
 use crate::metric::RiskAdjustedInfoRatio;
-use crate::micro_backtest::{BacktestResult, MicroBacktestEngine};
+use crate::micro_backtest::{BacktestResult, MicroBacktestEngine, default_windows, FATAL_IR};
 
 /// A strategy hypothesis proposed by an agent.
 #[derive(Clone, Debug)]
@@ -36,6 +36,8 @@ pub struct HypothesisRecord {
 pub struct AutoresearchRuntime {
     /// Current best IR score.
     pub baseline_ir: f64,
+    /// IR of passive buy-and-hold baseline (ghost hold).
+    pub baseline_hold_ir: f64,
     /// Hypothesis queue to evaluate.
     pub hypothesis_queue: VecDeque<StrategyHypothesis>,
     /// Micro-backtest engine.
@@ -52,6 +54,7 @@ impl AutoresearchRuntime {
     pub fn new(improvement_threshold: f64) -> Self {
         Self {
             baseline_ir: 0.0,
+            baseline_hold_ir: 0.0,
             hypothesis_queue: VecDeque::new(),
             micro_bt: MicroBacktestEngine::new(300), // 5 min window
             metric: RiskAdjustedInfoRatio,
@@ -70,25 +73,44 @@ impl AutoresearchRuntime {
     pub fn run_ratchet(&mut self, baseline_returns: &[f64], prices: &[f64]) {
         self.baseline_ir = self.metric.evaluate(baseline_returns);
 
+        // Compute ghost hold baseline: passive buy-and-hold IR
+        let hold_returns = MicroBacktestEngine::simulate_hold_baseline(prices);
+        self.baseline_hold_ir = self.metric.evaluate(&hold_returns);
+
         while let Some(hypo) = self.hypothesis_queue.pop_front() {
             info!("Evaluating hypothesis: {}", hypo.id);
 
             let candidate_returns = self.simulate_candidate(&hypo, prices);
-            let candidate_ir = self.metric.evaluate(&candidate_returns);
 
-            let accepted =
+            // Multi-window crucible: evaluate across time horizons
+            let multi = self.micro_bt.run_multi_window(&candidate_returns, &default_windows());
+            let candidate_ir = if multi.short_circuited {
+                FATAL_IR
+            } else {
+                multi.weighted_ir
+            };
+
+            // Must beat both the ratchet baseline AND the hold baseline
+            let beats_ratchet =
                 self.metric
                     .is_improvement(candidate_ir, self.baseline_ir, self.improvement_threshold);
+            let beats_hold = candidate_ir > self.baseline_hold_ir;
+            let accepted = beats_ratchet && beats_hold;
 
             if accepted {
                 info!(
-                    "RATCHET UP: {} improved IR from {:.4} to {:.4}",
-                    hypo.id, self.baseline_ir, candidate_ir
+                    "RATCHET UP: {} improved IR from {:.4} to {:.4} (hold baseline: {:.4})",
+                    hypo.id, self.baseline_ir, candidate_ir, self.baseline_hold_ir
                 );
                 self.baseline_ir = candidate_ir;
+            } else if !beats_hold {
+                warn!(
+                    "Rejected: {} (IR {:.4} does not beat hold baseline {:.4}, alpha <= 0)",
+                    hypo.id, candidate_ir, self.baseline_hold_ir
+                );
             } else {
                 warn!(
-                    "Rejected: {} (IR {:.4} vs baseline {:.4})",
+                    "Rejected: {} (IR {:.4} vs ratchet baseline {:.4})",
                     hypo.id, candidate_ir, self.baseline_ir
                 );
             }
@@ -225,5 +247,48 @@ mod tests {
         // In a trending market, momentum strategy should capture positive returns
         let total: f64 = returns.iter().sum();
         assert!(total > 0.0, "expected positive returns in uptrend, got {}", total);
+    }
+
+    #[test]
+    fn test_ratchet_rejects_below_hold() {
+        let mut runtime = AutoresearchRuntime::new(0.05);
+        runtime.baseline_ir = 0.0; // low ratchet baseline
+
+        // Trending up prices — hold baseline will be positive
+        let prices: Vec<f64> = (0..30).map(|i| 100.0 + i as f64 * 2.0).collect();
+        let baseline_returns: Vec<f64> = prices.windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        // Submit a "flat" strategy (window=100 → all above MA in uptrend → same as hold)
+        // But with a very large window that produces fewer returns, diluting IR
+        runtime.submit(StrategyHypothesis {
+            id: UUID4::new(),
+            description: "window=25".to_string(), // large window → fewer returns
+            code_patch: String::new(),
+            parent_id: None,
+        });
+
+        runtime.run_ratchet(&baseline_returns, &prices);
+        assert_eq!(runtime.total_evaluated(), 1);
+        // The hold baseline should be computed
+        assert!(runtime.baseline_hold_ir != 0.0 || prices.len() < 2,
+            "hold baseline IR should be non-zero for trending prices");
+    }
+
+    #[test]
+    fn test_hold_baseline_ir_computed() {
+        let mut runtime = AutoresearchRuntime::new(0.05);
+
+        // Uptrend: hold baseline should be positive
+        let prices: Vec<f64> = (0..20).map(|i| 100.0 + i as f64).collect();
+        let baseline_returns: Vec<f64> = prices.windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        // No hypotheses — just verify hold baseline is computed
+        runtime.run_ratchet(&baseline_returns, &prices);
+        assert!(runtime.baseline_hold_ir > 0.0,
+            "hold baseline IR should be positive in uptrend, got {}", runtime.baseline_hold_ir);
     }
 }

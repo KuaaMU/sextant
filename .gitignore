@@ -5,3 +5,4 @@ Cargo.lock
 *.pdb
 .env
 *.log
+*.mmap

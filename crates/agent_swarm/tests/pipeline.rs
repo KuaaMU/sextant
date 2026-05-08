@@ -69,7 +69,7 @@ async fn test_full_pipeline_router_hold_escalates_to_agent() {
                     delta: None,
                 }),
                 risk_budget: nautilus_agent_swarm::RiskBudget {
-                    max_loss: 100.0,
+                    max_loss: 5000.0, // covers 10 BTC * 50000 * 50bps slippage
                     max_position: 100.0,
                     max_drawdown_bps: 500.0,
                 },
