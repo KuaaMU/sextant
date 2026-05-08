@@ -7,6 +7,7 @@ use nautilus_core::UUID4;
 
 use crate::metric::RiskAdjustedInfoRatio;
 use crate::micro_backtest::{BacktestResult, MicroBacktestEngine, default_windows, FATAL_IR};
+use crate::strategy_lock::StrategyLock;
 
 /// Strategy types the ratchet can evaluate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +89,8 @@ pub struct AutoresearchRuntime {
     pub improvement_threshold: f64,
     /// History of evaluated hypotheses.
     pub history: Vec<HypothesisRecord>,
+    /// Strategy lock — human-in-the-loop governance.
+    pub strategy_lock: StrategyLock,
 }
 
 impl AutoresearchRuntime {
@@ -100,6 +103,7 @@ impl AutoresearchRuntime {
             metric: RiskAdjustedInfoRatio,
             improvement_threshold,
             history: Vec::new(),
+            strategy_lock: StrategyLock::new(),
         }
     }
 
@@ -138,11 +142,20 @@ impl AutoresearchRuntime {
             let accepted = beats_ratchet && beats_hold;
 
             if accepted {
-                info!(
-                    "RATCHET UP: {} improved IR from {:.4} to {:.4} (hold baseline: {:.4})",
-                    hypo.id, self.baseline_ir, candidate_ir, self.baseline_hold_ir
-                );
-                self.baseline_ir = candidate_ir;
+                if self.strategy_lock.can_apply() {
+                    info!(
+                        "RATCHET UP: {} improved IR from {:.4} to {:.4} (hold baseline: {:.4})",
+                        hypo.id, self.baseline_ir, candidate_ir, self.baseline_hold_ir
+                    );
+                    self.baseline_ir = candidate_ir;
+                } else {
+                    // Locked: stage for human approval
+                    self.strategy_lock.stage_mutation(
+                        hypo.clone(),
+                        candidate_ir,
+                        self.baseline_ir,
+                    );
+                }
             } else if !beats_hold {
                 warn!(
                     "Rejected: {} (IR {:.4} does not beat hold baseline {:.4}, alpha <= 0)",
@@ -487,5 +500,45 @@ mod tests {
             let returns = runtime.simulate_candidate(&hypo, &prices);
             assert!(!returns.is_empty(), "{:?} should produce returns", st);
         }
+    }
+
+    #[test]
+    fn test_locked_strategy_stages_mutation() {
+        let mut runtime = AutoresearchRuntime::new(0.05);
+        runtime.strategy_lock.locked = true;
+
+        // Trending prices that should produce an accepted improvement
+        let prices: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 0.5).collect();
+        let baseline_returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        runtime.submit(make_hypo(StrategyType::Momentum, "window=10"));
+        runtime.run_ratchet(&baseline_returns, &prices);
+
+        // Baseline should NOT have changed (mutation staged, not applied)
+        assert!(runtime.strategy_lock.pending_mutation.is_some(),
+            "locked strategy should stage mutation");
+    }
+
+    #[test]
+    fn test_unlocked_strategy_applies_directly() {
+        let mut runtime = AutoresearchRuntime::new(0.05);
+        assert!(!runtime.strategy_lock.locked);
+
+        let prices: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 0.5).collect();
+        let baseline_returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        runtime.submit(make_hypo(StrategyType::Momentum, "window=10"));
+
+        runtime.run_ratchet(&baseline_returns, &prices);
+
+        // No pending mutation — applied directly
+        assert!(runtime.strategy_lock.pending_mutation.is_none(),
+            "unlocked strategy should apply mutations directly");
     }
 }
