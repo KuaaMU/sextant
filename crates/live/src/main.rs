@@ -271,19 +271,21 @@ async fn main() -> anyhow::Result<()> {
     if let Some(router) = router {
         swarm = swarm.with_router(router);
     }
-    swarm.add_agent(Box::new(MomentumAgent::new(
+    swarm.add_agent(Box::new(MomentumAgent::new_with_cooldown(
         "momentum-01",
         instrument_id,
         0.0005, // 0.05% — BTC moves ~0.1% per 10 ticks on demo
         base_size,
         max_trades,
+        cooldown_secs,
     )));
-    swarm.add_agent(Box::new(MeanReversionAgent::new(
+    swarm.add_agent(Box::new(MeanReversionAgent::new_with_cooldown(
         "mean-rev-01",
         instrument_id,
         1.5,    // 1.5 sigma z-score threshold
         base_size,
         max_trades,
+        cooldown_secs,
     )));
     swarm.add_agent(Box::new(nautilus_agent_swarm::RiskAgent::new(
         "risk-01",

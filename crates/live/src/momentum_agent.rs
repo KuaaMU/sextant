@@ -28,8 +28,12 @@ pub struct MomentumAgent {
     /// Force a trade on next cycle (SEXTANT_FORCE_TRADE=1).
     force_trade: bool,
     force_triggered: bool,
-    /// Trade counter circuit breaker (P0: shared struct).
+    /// Trade counter circuit breaker.
     limiter: TradeLimiter,
+    /// Minimum seconds between trades.
+    cooldown_secs: u64,
+    /// Timestamp of last fill (Unix nanos).
+    last_fill_ns: u64,
 }
 
 impl MomentumAgent {
@@ -39,6 +43,17 @@ impl MomentumAgent {
         threshold: f64,
         base_size: f64,
         max_trades: u32,
+    ) -> Self {
+        Self::new_with_cooldown(id, instrument_id, threshold, base_size, max_trades, 0)
+    }
+
+    pub fn new_with_cooldown(
+        id: &str,
+        instrument_id: InstrumentId,
+        threshold: f64,
+        base_size: f64,
+        max_trades: u32,
+        cooldown_secs: u64,
     ) -> Self {
         let force = std::env::var("SEXTANT_FORCE_TRADE")
             .map(|v| v == "1")
@@ -56,6 +71,8 @@ impl MomentumAgent {
             force_trade: force,
             force_triggered: false,
             limiter: TradeLimiter::new(id, max_trades),
+            cooldown_secs,
+            last_fill_ns: 0,
         }
     }
 
@@ -92,6 +109,22 @@ impl Agent for MomentumAgent {
                 self.limiter.max_trades()
             );
             return AgentIntent::hold(&self.id, self.instrument_id);
+        }
+
+        // Cooldown: suppress signals for cooldown_secs after a fill
+        if self.cooldown_secs > 0 && self.last_fill_ns > 0 {
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
+            let elapsed_s = (now_ns - self.last_fill_ns) / 1_000_000_000;
+            if elapsed_s < self.cooldown_secs {
+                debug!(
+                    "[{}] cooldown: {}s / {}s elapsed — HOLD",
+                    self.id, elapsed_s, self.cooldown_secs
+                );
+                return AgentIntent::hold(&self.id, self.instrument_id);
+            }
         }
 
         // Debug: force a trade to verify end-to-end pipeline
@@ -202,10 +235,15 @@ impl Agent for MomentumAgent {
     async fn on_feedback(&mut self, feedback: &AgentFeedback) {
         if feedback.success {
             self.limiter.record_fill();
+            self.last_fill_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
             info!(
-                "[{}] Order filled ({}/{}): price={:?} qty={:?} slippage={:?}bps",
+                "[{}] Order filled ({}/{}): price={:?} qty={:?} slippage={:?}bps cooldown={}s",
                 self.id, self.limiter.trade_count(), self.limiter.max_trades(),
-                feedback.fill_price, feedback.fill_quantity, feedback.slippage_bps
+                feedback.fill_price, feedback.fill_quantity, feedback.slippage_bps,
+                self.cooldown_secs,
             );
         } else {
             // Order failed — reset position state so we can re-enter

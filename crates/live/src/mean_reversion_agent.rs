@@ -26,8 +26,12 @@ pub struct MeanReversionAgent {
     base_size: f64,
     last_z: f64,
     position_held: bool,
-    /// Trade counter circuit breaker (P0: shared struct).
+    /// Trade counter circuit breaker.
     limiter: TradeLimiter,
+    /// Minimum seconds between trades.
+    cooldown_secs: u64,
+    /// Timestamp of last fill (Unix nanos).
+    last_fill_ns: u64,
 }
 
 impl MeanReversionAgent {
@@ -38,6 +42,17 @@ impl MeanReversionAgent {
         base_size: f64,
         max_trades: u32,
     ) -> Self {
+        Self::new_with_cooldown(id, instrument_id, z_threshold, base_size, max_trades, 0)
+    }
+
+    pub fn new_with_cooldown(
+        id: &str,
+        instrument_id: InstrumentId,
+        z_threshold: f64,
+        base_size: f64,
+        max_trades: u32,
+        cooldown_secs: u64,
+    ) -> Self {
         Self {
             id: id.to_string(),
             instrument_id,
@@ -46,6 +61,8 @@ impl MeanReversionAgent {
             last_z: 0.0,
             position_held: false,
             limiter: TradeLimiter::new(id, max_trades),
+            cooldown_secs,
+            last_fill_ns: 0,
         }
     }
 
@@ -114,6 +131,22 @@ impl Agent for MeanReversionAgent {
                 self.limiter.max_trades()
             );
             return self.hold_intent();
+        }
+
+        // Cooldown: suppress signals for cooldown_secs after a fill
+        if self.cooldown_secs > 0 && self.last_fill_ns > 0 {
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
+            let elapsed_s = (now_ns - self.last_fill_ns) / 1_000_000_000;
+            if elapsed_s < self.cooldown_secs {
+                debug!(
+                    "[{}] cooldown: {}s / {}s elapsed — HOLD",
+                    self.id, elapsed_s, self.cooldown_secs
+                );
+                return self.hold_intent();
+            }
         }
 
         let spread_bps = Self::parse_spread_bps(ctx.market_state_str());
@@ -202,10 +235,15 @@ impl Agent for MeanReversionAgent {
     async fn on_feedback(&mut self, feedback: &AgentFeedback) {
         if feedback.success {
             self.limiter.record_fill();
+            self.last_fill_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
             info!(
-                "[{}] Reversion trade filled: price={:?} qty={:?} ({}/{})",
+                "[{}] Reversion trade filled: price={:?} qty={:?} ({}/{}) cooldown={}s",
                 self.id, feedback.fill_price, feedback.fill_quantity,
-                self.limiter.trade_count(), self.limiter.max_trades()
+                self.limiter.trade_count(), self.limiter.max_trades(),
+                self.cooldown_secs,
             );
         } else {
             // Reset position state on failure so we can re-enter
