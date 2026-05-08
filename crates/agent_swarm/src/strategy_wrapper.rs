@@ -737,7 +737,6 @@ impl DataActor for SwarmStrategy {
 
         // 4. Read current context and run swarm cycle
         // === P0: Cycle timeout to prevent hangs ===
-        // TODO(P1): Per-agent isolation via AgentSandbox (catch_unwind + resource quotas)
         let ctx = self.encoder.current_context();
         let directives = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
