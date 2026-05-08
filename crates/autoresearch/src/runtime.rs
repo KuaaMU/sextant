@@ -5,6 +5,7 @@ use tracing::{info, warn};
 
 use nautilus_core::UUID4;
 
+use crate::event_backtest::{EventBacktester, ExchangeConfig, momentum_signals, mean_reversion_signals};
 use crate::metric::RiskAdjustedInfoRatio;
 use crate::micro_backtest::{BacktestResult, MicroBacktestEngine, default_windows, FATAL_IR};
 use crate::strategy_lock::StrategyLock;
@@ -199,6 +200,41 @@ impl AutoresearchRuntime {
             StrategyType::VolTarget => Self::simulate_vol_target(hypo, prices),
             StrategyType::DualMomentum => Self::simulate_dual_momentum(hypo, prices),
         }
+    }
+
+    /// Simulate candidate using event-driven backtester with realistic execution.
+    ///
+    /// Unlike `simulate_candidate` (pure price returns), this models order execution
+    /// with slippage, fees, and position tracking. Used for final validation of
+    /// hypotheses that pass the quick screening.
+    pub fn simulate_candidate_event_driven(
+        &self,
+        hypo: &StrategyHypothesis,
+        prices: &[f64],
+        config: &ExchangeConfig,
+    ) -> BacktestResult {
+        let bt = EventBacktester::new(config.clone());
+        let size = 1.0;
+
+        let signals = match hypo.strategy_type {
+            StrategyType::Momentum => {
+                let window = Self::parse_param(&hypo.description, "window", 5).min(prices.len() - 1);
+                momentum_signals(prices, window, size)
+            }
+            StrategyType::MeanReversion => {
+                let window = Self::parse_param(&hypo.description, "window", 20).min(prices.len() - 1);
+                let threshold = Self::parse_param_f64(&hypo.description, "threshold", 1.5);
+                mean_reversion_signals(prices, window, threshold, size)
+            }
+            _ => {
+                // For Breakout/VolTarget/DualMomentum, fall back to momentum signals
+                // as a conservative approximation until dedicated signal generators exist.
+                let window = Self::parse_param(&hypo.description, "window", 10).min(prices.len() - 1);
+                momentum_signals(prices, window, size)
+            }
+        };
+
+        bt.run(prices, &signals)
     }
 
     /// Momentum: long when price > MA, flat otherwise.
@@ -520,6 +556,47 @@ mod tests {
         // Baseline should NOT have changed (mutation staged, not applied)
         assert!(runtime.strategy_lock.pending_mutation.is_some(),
             "locked strategy should stage mutation");
+    }
+
+    #[test]
+    fn test_event_driven_simulation() {
+        let runtime = AutoresearchRuntime::new(0.05);
+        let prices: Vec<f64> = (0..40).map(|i| 100.0 + i as f64 * 0.5).collect();
+        let hypo = make_hypo(StrategyType::Momentum, "window=10");
+        let config = ExchangeConfig {
+            fee_rate: 0.0006,
+            slippage_bps: 1.0,
+            initial_capital: 10000.0,
+            contract_multiplier: 1.0,
+        };
+
+        let result = runtime.simulate_candidate_event_driven(&hypo, &prices, &config);
+        assert!(!result.returns.is_empty(), "should produce equity returns");
+        assert!(result.trade_count > 0, "should have executed trades");
+        assert!(result.total_return != 0.0 || prices.len() < 2,
+            "should have non-zero return in trending market");
+    }
+
+    #[test]
+    fn test_event_driven_vs_simple_differs() {
+        let runtime = AutoresearchRuntime::new(0.05);
+        let prices: Vec<f64> = (0..40).map(|i| 100.0 + i as f64 * 0.5).collect();
+        let hypo = make_hypo(StrategyType::Momentum, "window=10");
+
+        let simple_returns = runtime.simulate_candidate(&hypo, &prices);
+        let config = ExchangeConfig {
+            fee_rate: 0.001, // 10bps fee
+            slippage_bps: 5.0,
+            initial_capital: 10000.0,
+            contract_multiplier: 1.0,
+        };
+        let event_result = runtime.simulate_candidate_event_driven(&hypo, &prices, &config);
+
+        // Event-driven with fees/slippage should produce different (worse) returns
+        let simple_total: f64 = simple_returns.iter().sum();
+        assert!(event_result.total_return < simple_total,
+            "event-driven with fees should return less: simple={}, event={}",
+            simple_total, event_result.total_return);
     }
 
     #[test]
