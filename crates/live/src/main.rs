@@ -230,16 +230,31 @@ async fn main() -> anyhow::Result<()> {
                     config.roles.perception,
                     config.roles.strategy,
                 );
+                let mut router = PerceptionRouter::new(RouterConfig::default());
+
+                // Layer 2: Small LLM (fast tactical)
                 match config.build_role_llm("perception") {
                     Ok(llm) => {
-                        eprintln!("  LLM ready: {}", llm.chat_url());
-                        Some(PerceptionRouter::new(RouterConfig::default()).with_small_llm(Box::new(llm)))
+                        eprintln!("  L2 (perception): {}", llm.chat_url());
+                        router = router.with_small_llm(Box::new(llm));
                     }
                     Err(e) => {
-                        eprintln!("  Warning: failed to build LLM: {}. Using rules-only.", e);
-                        Some(PerceptionRouter::new(RouterConfig::default()))
+                        eprintln!("  Warning: L2 LLM failed: {}. Using rules-only.", e);
                     }
                 }
+
+                // Layer 3: Large LLM (strategic)
+                match config.build_role_llm("strategy") {
+                    Ok(llm) => {
+                        eprintln!("  L3 (strategy):   {}", llm.chat_url());
+                        router = router.with_large_llm(Box::new(llm));
+                    }
+                    Err(e) => {
+                        eprintln!("  Info: L3 LLM not available: {}. L2 fallback only.", e);
+                    }
+                }
+
+                Some(router)
             }
             Err(e) => {
                 eprintln!("  Warning: failed to load llm.toml: {}. Using rules-only.", e);

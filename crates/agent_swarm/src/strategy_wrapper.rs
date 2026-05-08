@@ -69,6 +69,8 @@ pub struct SwarmStrategy {
     last_autoresearch: Option<Instant>,
     /// Optional callback for broadcasting events to external consumers (WebSocket, GUI).
     event_callback: Option<Box<dyn Fn(SextantEvent) + Send + Sync>>,
+    /// Last observed mid price from quote feed (for slippage computation).
+    last_mid_price: f64,
 }
 
 impl SwarmStrategy {
@@ -164,6 +166,7 @@ impl SwarmStrategy {
             price_history: Vec::with_capacity(600), // ~10 min of 1Hz data
             last_autoresearch: None,
             event_callback: None,
+            last_mid_price: 0.0,
         }
     }
 
@@ -485,11 +488,18 @@ impl DataActor for SwarmStrategy {
         );
 
         // Emit OrderFilled event to extended event buffer and callback
+        // Slippage: deviation of fill price from last mid, in bps
+        let slippage_bps = if self.last_mid_price > 0.0 {
+            let side_sign = if event.order_side == NautilusOrderSide::Buy { 1.0 } else { -1.0 };
+            ((price - self.last_mid_price) / self.last_mid_price * side_sign * 10000.0).abs()
+        } else {
+            0.0
+        };
         let fill_event = SextantEvent::OrderFilled {
             order_id: event.client_order_id.to_string(),
             fill_price: price,
             fill_qty: qty,
-            slippage_bps: 0.0, // TODO: compute actual slippage
+            slippage_bps,
             timestamp_ns: event.ts_event.as_u64(),
         };
         self.encoder.push_event(&fill_event);
@@ -629,6 +639,7 @@ impl DataActor for SwarmStrategy {
 
         // 3. Collect price history for autoresearch
         let mid = (quote.bid_price.as_f64() + quote.ask_price.as_f64()) / 2.0;
+        self.last_mid_price = mid;
         self.price_history.push(mid);
         if self.price_history.len() > 600 {
             self.price_history.remove(0); // Keep last 600 prices (~10 min at 1Hz)
