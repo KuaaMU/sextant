@@ -116,6 +116,20 @@ impl AutoresearchRuntime {
 
     /// Run one ratchet cycle: evaluate all queued hypotheses against price history.
     pub fn run_ratchet(&mut self, baseline_returns: &[f64], prices: &[f64]) {
+        self.run_ratchet_with_validation(baseline_returns, prices, None);
+    }
+
+    /// Run ratchet with optional event-driven validation.
+    ///
+    /// If `exchange_config` is provided, candidates that pass the quick screening
+    /// are re-validated with realistic slippage/fees via EventBacktester.
+    /// Candidates that fail the event-driven check are rejected.
+    pub fn run_ratchet_with_validation(
+        &mut self,
+        baseline_returns: &[f64],
+        prices: &[f64],
+        exchange_config: Option<&ExchangeConfig>,
+    ) {
         self.baseline_ir = self.metric.evaluate(baseline_returns);
 
         // Compute ghost hold baseline: passive buy-and-hold IR
@@ -140,20 +154,46 @@ impl AutoresearchRuntime {
                 self.metric
                     .is_improvement(candidate_ir, self.baseline_ir, self.improvement_threshold);
             let beats_hold = candidate_ir > self.baseline_hold_ir;
-            let accepted = beats_ratchet && beats_hold;
+            let mut accepted = beats_ratchet && beats_hold;
+
+            // Stage 2: Event-driven validation with realistic execution
+            let mut event_result = None;
+            if accepted {
+                if let Some(config) = exchange_config {
+                    let er = self.simulate_candidate_event_driven(&hypo, prices, config);
+                    let event_beats_hold = er.ir > self.baseline_hold_ir;
+                    let event_beats_ratchet =
+                        self.metric.is_improvement(er.ir, self.baseline_ir, self.improvement_threshold);
+
+                    if !event_beats_hold || !event_beats_ratchet {
+                        info!(
+                            "Event-driven validation FAILED for {}: IR {:.4} (slippage/fees too high)",
+                            hypo.id, er.ir
+                        );
+                        accepted = false;
+                    } else {
+                        info!(
+                            "Event-driven validation PASSED for {}: IR {:.4} ({} trades, {:.4} return)",
+                            hypo.id, er.ir, er.trade_count, er.total_return
+                        );
+                    }
+                    event_result = Some(er);
+                }
+            }
 
             if accepted {
+                let final_ir = event_result.as_ref().map(|e| e.ir).unwrap_or(candidate_ir);
                 if self.strategy_lock.can_apply() {
                     info!(
                         "RATCHET UP: {} improved IR from {:.4} to {:.4} (hold baseline: {:.4})",
-                        hypo.id, self.baseline_ir, candidate_ir, self.baseline_hold_ir
+                        hypo.id, self.baseline_ir, final_ir, self.baseline_hold_ir
                     );
-                    self.baseline_ir = candidate_ir;
+                    self.baseline_ir = final_ir;
                 } else {
                     // Locked: stage for human approval
                     self.strategy_lock.stage_mutation(
                         hypo.clone(),
-                        candidate_ir,
+                        final_ir,
                         self.baseline_ir,
                     );
                 }
@@ -171,13 +211,13 @@ impl AutoresearchRuntime {
 
             self.history.push(HypothesisRecord {
                 hypothesis: hypo,
-                result: BacktestResult {
+                result: event_result.unwrap_or(BacktestResult {
                     returns: candidate_returns,
                     total_return: 0.0,
                     max_drawdown: 0.0,
                     trade_count: 0,
                     ir: candidate_ir,
-                },
+                }),
                 accepted,
                 timestamp_ns: 0, // Would use real clock
             });
@@ -575,6 +615,54 @@ mod tests {
         assert!(result.trade_count > 0, "should have executed trades");
         assert!(result.total_return != 0.0 || prices.len() < 2,
             "should have non-zero return in trending market");
+    }
+
+    #[test]
+    fn test_ratchet_with_event_driven_validation() {
+        let mut runtime = AutoresearchRuntime::new(0.05);
+        let prices: Vec<f64> = (0..40).map(|i| 100.0 + i as f64 * 0.5).collect();
+        let baseline_returns: Vec<f64> = prices.windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        let config = ExchangeConfig {
+            fee_rate: 0.0006,
+            slippage_bps: 1.0,
+            initial_capital: 10000.0,
+            contract_multiplier: 1.0,
+        };
+
+        runtime.submit(make_hypo(StrategyType::Momentum, "window=10"));
+        runtime.run_ratchet_with_validation(&baseline_returns, &prices, Some(&config));
+
+        assert_eq!(runtime.total_evaluated(), 1);
+        // History should have the event-driven result
+        let record = &runtime.history[0];
+        assert!(record.result.trade_count > 0 || record.result.returns.is_empty(),
+            "event-driven result should track trades");
+    }
+
+    #[test]
+    fn test_ratchet_with_validation_rejects_fee_eaten_alpha() {
+        let mut runtime = AutoresearchRuntime::new(0.05);
+        // Very high fees that eat all alpha
+        let config = ExchangeConfig {
+            fee_rate: 0.05, // 50% fee — absurd, but tests the gate
+            slippage_bps: 100.0,
+            initial_capital: 10000.0,
+            contract_multiplier: 1.0,
+        };
+        let prices: Vec<f64> = (0..40).map(|i| 100.0 + i as f64 * 0.1).collect();
+        let baseline_returns: Vec<f64> = prices.windows(2)
+            .map(|w| (w[1] - w[0]) / w[0])
+            .collect();
+
+        runtime.submit(make_hypo(StrategyType::Momentum, "window=10"));
+        runtime.run_ratchet_with_validation(&baseline_returns, &prices, Some(&config));
+
+        // With 50% fees, the strategy should be rejected
+        assert_eq!(runtime.accepted_count(), 0,
+            "absurd fees should cause rejection");
     }
 
     #[test]
