@@ -5,7 +5,8 @@ use tracing::{debug, info};
 
 use crate::agent::{Agent, AgentFeedback};
 use crate::compiler::IntentCompiler;
-use crate::intent::{AgentIntent, ExecutionDirective, IntentType};
+use crate::consensus::{ConsensusEngine, HierarchicalConsensus, PipelineConsensus, WeightedVoteConsensus, normalize_confidences};
+use crate::intent::{AgentIntent, ExecutionDirective};
 use crate::perception::router::PerceptionRouter;
 
 /// Strategy for resolving conflicts between multiple agents.
@@ -17,6 +18,18 @@ pub enum ConsensusStrategy {
     WeightedVote,
     /// Serial pipeline: Perception → Strategy → Risk → Execution.
     Pipeline,
+}
+
+impl ConsensusStrategy {
+    fn to_engine(&self) -> Box<dyn ConsensusEngine> {
+        match self {
+            Self::Pipeline => Box::new(PipelineConsensus),
+            Self::WeightedVote => Box::new(WeightedVoteConsensus),
+            Self::Hierarchical { priority } => Box::new(HierarchicalConsensus {
+                priority: priority.clone(),
+            }),
+        }
+    }
 }
 
 /// Coordinates multiple agents and compiles their intents into directives.
@@ -116,125 +129,15 @@ impl SwarmCoordinator {
     }
 
     /// Resolve conflicts between intents on the same instrument.
-    fn resolve_conflicts(&self, intents: Vec<AgentIntent>) -> Vec<AgentIntent> {
-        match &self.consensus {
-            ConsensusStrategy::Pipeline => {
-                // Check for Veto first — overrides all other intents
-                let veto = intents.iter().find(|i| i.intent_type == IntentType::Veto);
-                if let Some(veto_intent) = veto {
-                    info!(
-                        "RISK VETO from '{}': {} — all intents overridden",
-                        veto_intent.agent_id, veto_intent.description
-                    );
-                    return vec![AgentIntent::hold(
-                        &veto_intent.agent_id,
-                        veto_intent.target_instrument,
-                    )];
-                }
+    ///
+    /// Normalizes confidence scores across agents before passing to the
+    /// consensus engine, so agents with different confidence scales compete fairly.
+    fn resolve_conflicts(&self, mut intents: Vec<AgentIntent>) -> Vec<AgentIntent> {
+        // Normalize confidences across agents before consensus
+        normalize_confidences(&mut intents);
 
-                // === P0: Pick highest-confidence non-Hold intent ===
-                // TODO(P1): Use ConsensusEngine trait with normalized confidence
-                let mut first_intent: Option<AgentIntent> = None;
-                let non_hold: Vec<AgentIntent> = intents
-                    .into_iter()
-                    .filter_map(|intent| {
-                        if first_intent.is_none() {
-                            first_intent = Some(intent.clone());
-                        }
-                        if intent.intent_type != IntentType::Hold {
-                            Some(intent)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                match non_hold.len() {
-                    0 => {
-                        // All agents said hold — return first intent as-is
-                        first_intent.into_iter().collect()
-                    }
-                    1 => non_hold,
-                    _ => {
-                        // Multiple non-Hold — pick highest confidence (NaN-safe)
-                        let best = non_hold
-                            .into_iter()
-                            .max_by(|a, b| {
-                                // NaN treated as lowest confidence
-                                let ca = if a.confidence.is_nan() { -1.0 } else { a.confidence };
-                                let cb = if b.confidence.is_nan() { -1.0 } else { b.confidence };
-                                ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .unwrap();
-                        vec![best]
-                    }
-                }
-            }
-            ConsensusStrategy::Hierarchical { priority } => {
-                // Group by instrument, pick highest-priority non-Hold intent
-                let mut by_instrument: std::collections::HashMap<String, Vec<AgentIntent>> =
-                    std::collections::HashMap::new();
-                for intent in intents {
-                    by_instrument
-                        .entry(intent.target_instrument.to_string())
-                        .or_default()
-                        .push(intent);
-                }
-
-                let mut result = Vec::new();
-                for (_, group) in by_instrument {
-                    let best = group
-                        .into_iter()
-                        .filter(|i| i.intent_type != IntentType::Hold)
-                        .max_by(|a, b| {
-                            let pa = priority
-                                .iter()
-                                .position(|id| id == &a.agent_id)
-                                .unwrap_or(usize::MAX);
-                            let pb = priority
-                                .iter()
-                                .position(|id| id == &b.agent_id)
-                                .unwrap_or(usize::MAX);
-                            pb.cmp(&pa) // lower index = higher priority
-                        });
-
-                    match best {
-                        Some(intent) => result.push(intent),
-                        None => {
-                            // All hold for this instrument
-                        }
-                    }
-                }
-                result
-            }
-            ConsensusStrategy::WeightedVote => {
-                // Weighted vote: score = confidence * reputation_score
-                let mut by_instrument: std::collections::HashMap<String, Vec<AgentIntent>> =
-                    std::collections::HashMap::new();
-                for intent in intents {
-                    by_instrument
-                        .entry(intent.target_instrument.to_string())
-                        .or_default()
-                        .push(intent);
-                }
-
-                by_instrument
-                    .into_values()
-                    .filter_map(|group| {
-                        group
-                            .into_iter()
-                            .filter(|i| i.intent_type != IntentType::Hold)
-                            .max_by(|a, b| {
-                                let score_a = a.confidence * a.reputation_score;
-                                let score_b = b.confidence * b.reputation_score;
-                                score_a
-                                    .partial_cmp(&score_b)
-                                    .unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                    })
-                    .collect()
-            }
-        }
+        let engine = self.consensus.to_engine();
+        engine.resolve(intents)
     }
 
     /// Forward order fill feedback to all agents.
@@ -254,6 +157,7 @@ impl SwarmCoordinator {
 mod tests {
     use super::*;
     use crate::agent::AgentFeedback;
+    use crate::intent::IntentType;
     use async_trait::async_trait;
     use nautilus_model::identifiers::InstrumentId;
     use std::time::Duration;

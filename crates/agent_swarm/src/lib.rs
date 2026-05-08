@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod compiler;
+pub mod consensus;
 pub mod intent;
 pub mod perception;
 pub mod risk_agent;
@@ -14,6 +15,7 @@ pub mod trade_limiter;
 
 // Re-export core types
 pub use agent::{Agent, AgentFeedback};
+pub use consensus::{ConsensusEngine, HierarchicalConsensus, PipelineConsensus, WeightedVoteConsensus, normalize_confidences};
 pub use trade_limiter::TradeLimiter;
 pub use compiler::{CompileError, IntentCompiler};
 pub use intent::{AgentIntent, ConfidenceLabel, ExecutionDirective, ExecutionStyle, IntentType, OrderSide, OrderSpecification, PositionTarget, RiskBudget, RiskSnapshot};
