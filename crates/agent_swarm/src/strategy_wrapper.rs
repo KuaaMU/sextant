@@ -29,7 +29,7 @@ use crate::intent::{ExecutionDirective, ExecutionStyle, OrderSide, TimeInForce};
 use crate::swarm::SwarmCoordinator;
 use nautilus_reputation::AutonomySlider;
 use nautilus_risk_potential::RiskPotentialField;
-use nautilus_autoresearch::{AutoresearchRuntime, StrategyHypothesis};
+use nautilus_autoresearch::{AutoresearchRuntime, StrategyHypothesis, StrategyType};
 
 /// Nautilus Strategy wrapper for the Sextant AgentSwarm.
 ///
@@ -645,18 +645,57 @@ impl DataActor for SwarmStrategy {
                 .map(|w| (w[1] - w[0]) / w[0])
                 .collect();
 
-            // Generate hypotheses based on recent momentum
+            // Generate hypotheses across multiple strategy types
             let recent_momentum = if returns.len() >= 10 {
                 returns[returns.len()-10..].iter().sum::<f64>()
             } else {
                 0.0
             };
+            let recent_vol = if returns.len() >= 10 {
+                let mean = recent_momentum / 10.0;
+                (returns[returns.len()-10..].iter().map(|r| (r - mean).powi(2)).sum::<f64>() / 10.0).sqrt()
+            } else {
+                0.001
+            };
 
-            // Submit hypothesis: try different window sizes
+            // Submit diverse hypotheses — one per strategy type
             let window = if recent_momentum > 0.0 { 10 } else { 20 };
             self.autoresearch.submit(StrategyHypothesis {
                 id: nautilus_core::UUID4::new(),
+                strategy_type: StrategyType::Momentum,
                 description: format!("momentum window={}", window),
+                code_patch: String::new(),
+                parent_id: None,
+            });
+
+            self.autoresearch.submit(StrategyHypothesis {
+                id: nautilus_core::UUID4::new(),
+                strategy_type: StrategyType::MeanReversion,
+                description: format!("mean_reversion window={} threshold=1.5", window),
+                code_patch: String::new(),
+                parent_id: None,
+            });
+
+            self.autoresearch.submit(StrategyHypothesis {
+                id: nautilus_core::UUID4::new(),
+                strategy_type: StrategyType::Breakout,
+                description: format!("breakout window={}", window),
+                code_patch: String::new(),
+                parent_id: None,
+            });
+
+            self.autoresearch.submit(StrategyHypothesis {
+                id: nautilus_core::UUID4::new(),
+                strategy_type: StrategyType::VolTarget,
+                description: format!("vol_target window={} target_vol={:.4}", window, recent_vol * 1.5),
+                code_patch: String::new(),
+                parent_id: None,
+            });
+
+            self.autoresearch.submit(StrategyHypothesis {
+                id: nautilus_core::UUID4::new(),
+                strategy_type: StrategyType::DualMomentum,
+                description: format!("dual_momentum fast=5 slow={}", window),
                 code_patch: String::new(),
                 parent_id: None,
             });

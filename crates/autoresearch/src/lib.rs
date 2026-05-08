@@ -8,4 +8,4 @@ pub mod micro_backtest;
 pub mod runtime;
 
 pub use metric::RiskAdjustedInfoRatio;
-pub use runtime::{AutoresearchRuntime, StrategyHypothesis};
+pub use runtime::{AutoresearchRuntime, StrategyHypothesis, StrategyType};
