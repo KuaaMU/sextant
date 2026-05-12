@@ -49,6 +49,7 @@ impl Drawer {
 }
 
 /// Autonomy level.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Autonomy {
     Manual,
@@ -56,6 +57,7 @@ pub enum Autonomy {
     Auto,
 }
 
+#[allow(dead_code)]
 impl Autonomy {
     pub fn label(self) -> &'static str {
         match self {
@@ -170,6 +172,7 @@ impl OhlcvAccumulator {
 }
 
 /// GUI-side agent log entry.
+#[allow(dead_code)]
 pub struct LogEntry {
     pub timestamp: String,
     pub agent_type: AgentType,
@@ -177,6 +180,7 @@ pub struct LogEntry {
     pub summary: String,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentType {
     Perception,
@@ -185,6 +189,7 @@ pub enum AgentType {
     Execution,
 }
 
+#[allow(dead_code)]
 impl AgentType {
     pub fn color(self) -> Color32 {
         match self {
@@ -256,6 +261,7 @@ impl AgentStatus {
 }
 
 /// Intent card — agent wants to trade.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct IntentCard {
     pub intent_id: String,
@@ -270,6 +276,7 @@ pub struct IntentCard {
 }
 
 /// Commands sent from GUI back to the engine.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum GuiCommand {
     ApproveIntent { intent_id: String },
@@ -279,6 +286,7 @@ pub enum GuiCommand {
 }
 
 /// Execution log sub-tab state.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionLogTab {
     Execution,

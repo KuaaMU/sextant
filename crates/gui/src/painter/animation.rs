@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Animation system — tween interpolation, opacity pulses, slide animations.
 //!
 //! All animations use wall-clock time. `value()` returns the interpolated

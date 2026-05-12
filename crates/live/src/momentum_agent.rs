@@ -37,6 +37,7 @@ pub struct MomentumAgent {
 }
 
 impl MomentumAgent {
+    #[allow(dead_code)]
     pub fn new(
         id: &str,
         instrument_id: InstrumentId,
@@ -82,7 +83,7 @@ impl MomentumAgent {
             .find("momentum:")
             .and_then(|i| {
                 let rest = &market_state[i + 9..];
-                rest.split(|c: char| c == '|' || c == ' ')
+                rest.split(['|', ' '])
                     .next()
                     .and_then(|s| s.parse::<f64>().ok())
             })

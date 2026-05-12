@@ -122,11 +122,7 @@ async fn main() -> anyhow::Result<()> {
     // ── Set Leverage ───────────────────────────────────────────
     // OKX POST /api/v5/account/set-leverage
     let inst_str = instrument_id.symbol.as_str().to_string();
-    let okx_base = if okx_environment == OKXEnvironment::Live {
-        "https://www.okx.com"
-    } else {
-        "https://www.okx.com" // demo uses same base, different creds
-    };
+    let okx_base = "https://www.okx.com";
     let leverage_url = format!("{}/api/v5/account/set-leverage", okx_base);
     let leverage_body = serde_json::json!({
         "instId": inst_str,

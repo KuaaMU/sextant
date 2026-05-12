@@ -37,8 +37,8 @@ impl Attestation {
         use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
         hasher.update(self.agent_id.to_string().as_bytes());
-        hasher.update(&self.decision_hash);
-        hasher.update(&self.realized_pnl_bytes());
+        hasher.update(self.decision_hash);
+        hasher.update(self.realized_pnl_bytes());
         hasher.update(self.timestamp_ns.to_le_bytes());
         hasher.finalize().into()
     }

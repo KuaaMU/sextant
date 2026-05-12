@@ -9,7 +9,7 @@ use crate::data::simulator::Simulator;
 /// Data source for the TUI.
 pub enum DataSource {
     /// Built-in simulator (default).
-    Simulator(Simulator),
+    Simulator(Box<Simulator>),
     /// Read from engine's mmap file.
     Mmap(MmapSource),
 }
@@ -182,7 +182,7 @@ impl App {
             show_help: false,
             zen_mode: false,
             frame_count: 0,
-            data_source: DataSource::Simulator(Simulator::new(150.0)),
+            data_source: DataSource::Simulator(Box::new(Simulator::new(150.0))),
             context: None,
             price_history: PriceHistory::new(60),
             log_entries: Vec::new(),
@@ -225,7 +225,7 @@ impl App {
                     self.current_price = sim.price();
                     self.price_history.push(self.current_price);
 
-                    if self.frame_count % 10 == 0 {
+                    if self.frame_count.is_multiple_of(10) {
                         let tick = sim.tick_count();
                         let entries = generate_log_entries(tick, self.current_price);
                         for entry in entries {
@@ -252,12 +252,8 @@ impl App {
     }
 
     /// Get border style for a panel — highlighted if active.
-    pub fn panel_borders(&self, panel: ActivePanel) -> Borders {
-        if self.active == panel {
-            Borders::ALL
-        } else {
-            Borders::ALL
-        }
+    pub fn panel_borders(&self, _panel: ActivePanel) -> Borders {
+        Borders::ALL
     }
 
     /// Should this panel be rendered?

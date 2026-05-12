@@ -547,7 +547,7 @@ impl DataActor for SwarmStrategy {
                 None,    // exec_algorithm_id
                 None,    // exec_algorithm_params
                 None,    // tags
-                Some(sl_cl_ord_id.clone()),
+                Some(sl_cl_ord_id),
             );
 
             if let Err(e) = self.submit_order(sl_order, None, None) {
@@ -647,7 +647,7 @@ impl DataActor for SwarmStrategy {
 
         // Run autoresearch ratchet every 5 minutes (if enough data)
         let should_run_ratchet = self.price_history.len() >= 60
-            && self.last_autoresearch.map_or(true, |t| t.elapsed().as_secs() > 300);
+            && self.last_autoresearch.is_none_or(|t| t.elapsed().as_secs() > 300);
 
         if should_run_ratchet {
             self.last_autoresearch = Some(Instant::now());

@@ -27,7 +27,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     // Scale latency bars to fit available width
     // Format: "  50ns  ████████████████████  85%     Writes/s: 12,450"
     // Bar section: label(7) + bar(20) + pct(5) = 32 chars, rest is stats
-    let bar_w = (w.saturating_sub(42)).max(5).min(30);
+    let bar_w = w.saturating_sub(42).clamp(5, 30);
     let bar = |filled_pct: usize, w: usize| -> String {
         let filled = filled_pct * w / 100;
         let empty = w - filled;
@@ -72,8 +72,8 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::raw(""),
         Line::styled("Read Latency Sparkline (last 60s)", Style::default().fg(Theme::TEXT_DIM)),
-        Line::raw(format!(" 80ns ┤ ╭╮  ╭╮")),
-        Line::raw(format!(" 60ns ┤╭╯╰──╯╰──╮  ╭╮")),
+        Line::raw(" 80ns ┤ ╭╮  ╭╮".to_string()),
+        Line::raw(" 60ns ┤╭╯╰──╯╰──╮  ╭╮".to_string()),
         Line::raw(format!(" 40ns ┤╯        ╰──╯╰{} avg: 47ns", "─".repeat(spark_w.saturating_sub(24)))),
         Line::from(vec![
             Span::styled(format!("      └{}", spark_axis), Style::default().fg(Theme::TEXT_DIM)),

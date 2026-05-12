@@ -181,6 +181,6 @@ fn volatility_color(vol: f64) -> Color32 {
 fn parse_spread(state: &str) -> Option<f64> {
     let marker = state.find("spread:")?;
     let rest = &state[marker + 7..];
-    let s = rest.split(|c: char| c == '|' || c == ' ').next()?;
+    let s = rest.split(['|', ' ']).next()?;
     s.parse().ok()
 }

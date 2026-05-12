@@ -85,7 +85,7 @@ Respond in JSON:
         }
 
         let mut lines = Vec::new();
-        let start = if count > 64 { count - 64 } else { 0 };
+        let start = count.saturating_sub(64);
         for i in start..count {
             let idx = (i as usize) % 64;
             let ev = &ctx.event_trace[idx];

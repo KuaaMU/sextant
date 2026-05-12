@@ -211,7 +211,7 @@ fn compute_ratchet_stats(state: &GuiState) -> (f64, usize, usize) {
                 }
             }
         }
-        (latest_ir.max(0.5).min(3.0), accepted, rejected)
+        (latest_ir.clamp(0.5, 3.0), accepted, rejected)
     } else if let Some(ref ctx) = state.context {
         // Fallback: IR derived from risk-adjusted return
         let ir = if state.price_history.prices.len() > 1 {
@@ -235,7 +235,7 @@ fn compute_ratchet_stats(state: &GuiState) -> (f64, usize, usize) {
             .filter(|e| e.event_type == 3 || e.event_type == 4)
             .count();
 
-        (ir.max(0.5).min(3.0), fills.max(1), alerts)
+        (ir.clamp(0.5, 3.0), fills.max(1), alerts)
     } else {
         (1.0, 0, 0)
     }
@@ -289,7 +289,7 @@ fn generate_hypotheses(
         .find("momentum:")
         .and_then(|i| {
             let rest = &ctx.market_state_str()[i + 9..];
-            rest.split(|c: char| c == '|' || c == ' ').next()
+            rest.split(['|', ' ']).next()
         })
         .unwrap_or("0.0");
 

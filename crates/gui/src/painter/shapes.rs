@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Custom shapes drawn via `egui::Painter` — gauges, heat blocks, flowing lines.
 
 use egui::{Color32, FontFamily, FontId, Pos2, Rect, Stroke, Vec2};

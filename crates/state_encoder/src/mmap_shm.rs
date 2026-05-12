@@ -16,7 +16,7 @@ use crate::context_window::ContextWindow;
 /// - bytes 0..8:   seq (AtomicU64)
 /// - bytes 8..N:   buffer[0] (ContextWindow)
 /// - bytes N..2N:  buffer[1] (ContextWindow)
-/// where N = size_of::<ContextWindow>()
+///   where N = size_of::<ContextWindow>()
 pub struct MmapWriter {
     _file: std::fs::File,
     mmap: MmapMut,

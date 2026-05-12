@@ -38,7 +38,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             } else if chart_w > base_w {
                 // Pad with trailing spaces
                 let mut out = s.to_string();
-                out.extend(std::iter::repeat(' ').take(chart_w.saturating_sub(base_w)));
+                out.extend(std::iter::repeat_n(' ', chart_w.saturating_sub(base_w)));
                 out
             } else {
                 s.chars().take(chart_w).collect()

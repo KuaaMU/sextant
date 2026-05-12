@@ -145,8 +145,8 @@ fn render_sparkline(prices: &[f64], width: usize) -> Vec<Line<'static>> {
             // Draw connecting line
             let y_from = prev_y.min(y);
             let y_to = prev_y.max(y);
-            for yy in y_from..=y_to {
-                grid[yy][i] = '│';
+            for row in grid[y_from..=y_to].iter_mut() {
+                row[i] = '│';
             }
         }
         grid[y][i] = '●';

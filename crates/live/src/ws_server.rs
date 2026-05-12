@@ -48,9 +48,8 @@ async fn handle_socket(socket: WebSocket, tx: broadcast::Sender<StreamEvent>) {
     // Handle incoming messages (ping/pong, close)
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Close(_) => break,
-                _ => {} // Ignore other messages
+            if let Message::Close(_) = msg {
+                break;
             }
         }
     });

@@ -74,7 +74,7 @@ impl Simulator {
         );
 
         // ── Position management: momentum-following strategy ──────
-        if self.tick_count % 30 == 0 {
+        if self.tick_count.is_multiple_of(30) {
             if self.position_size == 0.0 && self.momentum > 0.002 {
                 // Enter long on positive momentum
                 self.position_size = 5.0 + (self.momentum * 500.0).min(15.0);
@@ -131,7 +131,7 @@ impl Simulator {
         // ── Build ContextWindow ───────────────────────────────────
         let mut ctx = ContextWindow::zeroed();
         ctx.version = self.tick_count;
-        ctx.timestamp_ns = 1700000000_000_000_000 + self.tick_count * 100_000_000;
+        ctx.timestamp_ns = 1_700_000_000_000_000_000 + self.tick_count * 100_000_000;
         ctx.set_instrument_id("SOL-USDC.OKX");
         ctx.set_market_state(&market_state);
         ctx.position_size = self.position_size;
@@ -143,9 +143,9 @@ impl Simulator {
             theta,
             vega,
         };
-        ctx.risk_potential = risk_pot as f64;
-        ctx.position_potential = pos_pot as f64;
-        ctx.drawdown_potential = dd_pot as f64;
+        ctx.risk_potential = risk_pot;
+        ctx.position_potential = pos_pot;
+        ctx.drawdown_potential = dd_pot;
 
         // ── Event trace: varied event types ───────────────────────
         // Always push a Trade event
@@ -157,7 +157,7 @@ impl Simulator {
         });
 
         // Push a Quote event every 3 ticks
-        if self.tick_count % 3 == 0 {
+        if self.tick_count.is_multiple_of(3) {
             ctx.push_event(EventToken {
                 event_type: 0, // Quote
                 price: bid,
@@ -167,7 +167,7 @@ impl Simulator {
         }
 
         // Push a Fill event on position changes
-        if self.tick_count % 30 == 0 && self.position_size != 0.0 {
+        if self.tick_count.is_multiple_of(30) && self.position_size != 0.0 {
             ctx.push_event(EventToken {
                 event_type: 2, // Fill
                 price: self.price,
@@ -213,7 +213,7 @@ impl Simulator {
             entries.push(LogEntry {
                 timestamp: format_ts(base_ts),
                 agent_type: LogAgentType::Perception,
-                latency_ms: 2 + (t % 7) as u64,
+                latency_ms: 2 + t % 7,
                 summary: format!(
                     "tick {} price={:.2} spread={:.4} vol={:.0}",
                     t,
@@ -225,7 +225,7 @@ impl Simulator {
         }
 
         // Strategy agent: evaluates momentum every 10 ticks
-        if t % 10 == 0 && t > 0 {
+        if t.is_multiple_of(10) && t > 0 {
             let action = if self.momentum > 0.002 {
                 "BUY signal"
             } else if self.momentum < -0.003 {
@@ -236,7 +236,7 @@ impl Simulator {
             entries.push(LogEntry {
                 timestamp: format_ts(base_ts),
                 agent_type: LogAgentType::Strategy,
-                latency_ms: 8 + (t % 15) as u64,
+                latency_ms: 8 + t % 15,
                 summary: format!(
                     "momentum={:+.4} regime={:.0}% → {}",
                     self.momentum,
@@ -247,12 +247,12 @@ impl Simulator {
         }
 
         // Risk agent: monitors on position changes or high vol
-        if t % 30 == 0 || self.volatility > 0.025 {
+        if t.is_multiple_of(30) || self.volatility > 0.025 {
             let risk_level = if self.volatility > 0.025 { "HIGH" } else { "NORMAL" };
             entries.push(LogEntry {
                 timestamp: format_ts(base_ts),
                 agent_type: LogAgentType::Risk,
-                latency_ms: 3 + (t % 5) as u64,
+                latency_ms: 3 + t % 5,
                 summary: format!(
                     "risk={:.2} pos_pot={:.2} dd={:.2} vol={} | {}",
                     (self.position_size.abs() / 20.0).min(1.0) * 0.4
@@ -270,11 +270,11 @@ impl Simulator {
         }
 
         // Execution agent: on fills
-        if t % 30 == 0 && self.position_size != 0.0 {
+        if t.is_multiple_of(30) && self.position_size != 0.0 {
             entries.push(LogEntry {
                 timestamp: format_ts(base_ts),
                 agent_type: LogAgentType::Execution,
-                latency_ms: 1 + (t % 3) as u64,
+                latency_ms: 1 + t % 3,
                 summary: format!(
                     "FILL {} {:.1} @ {:.2} (pos: {:.1})",
                     if self.position_size > 0.0 { "BUY" } else { "SELL" },

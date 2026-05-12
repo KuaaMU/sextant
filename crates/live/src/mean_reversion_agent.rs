@@ -35,6 +35,7 @@ pub struct MeanReversionAgent {
 }
 
 impl MeanReversionAgent {
+    #[allow(dead_code)]
     pub fn new(
         id: &str,
         instrument_id: InstrumentId,
@@ -105,7 +106,7 @@ impl MeanReversionAgent {
             .find("spread:")
             .and_then(|i| {
                 let rest = &market_state[i + 7..];
-                rest.split(|c: char| c == '|' || c == ' ')
+                rest.split(['|', ' '])
                     .next()
                     .and_then(|s| s.trim_end_matches("bps").parse::<f64>().ok())
             })

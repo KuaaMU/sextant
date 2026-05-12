@@ -25,11 +25,13 @@ impl EventBroadcaster {
         self.tx.clone()
     }
 
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<StreamEvent> {
         self.tx.subscribe()
     }
 
     /// Broadcast a SextantEvent to all connected clients.
+    #[allow(dead_code)]
     pub fn broadcast(&self, event: SextantEvent) {
         let stream_event = StreamEvent {
             timestamp_ns: std::time::SystemTime::now()

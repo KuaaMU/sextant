@@ -60,7 +60,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::raw(""));
 
         // Potential bars — bar width adapts to panel width
-        let bar_w = (area.width as usize).saturating_sub(34).max(5).min(40);
+        let bar_w = (area.width as usize).saturating_sub(34).clamp(5, 40);
         lines.push(potential_bar("Position", pos_pot, 1.0, bar_w));
         lines.push(potential_bar("Drawdown", dd_pot, 1.0, bar_w));
         lines.push(potential_bar("Concentration", risk_pot * 0.6, 1.0, bar_w));

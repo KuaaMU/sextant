@@ -55,16 +55,13 @@ pub enum ConstraintValue {
 
 /// Confidence label for UI binary signal (High/Low).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ConfidenceLabel {
+    #[default]
     Low,
     High,
 }
 
-impl Default for ConfidenceLabel {
-    fn default() -> Self {
-        Self::Low
-    }
-}
 
 /// Risk snapshot for UI gauge display.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

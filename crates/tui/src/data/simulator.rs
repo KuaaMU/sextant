@@ -68,7 +68,7 @@ impl Simulator {
         );
 
         // Simulate position changes
-        if self.tick_count % 50 == 0 {
+        if self.tick_count.is_multiple_of(50) {
             if self.position_size == 0.0 {
                 self.position_size = 10.0;
                 self.entry_price = self.price;
@@ -87,7 +87,7 @@ impl Simulator {
         // Build ContextWindow
         let mut ctx = ContextWindow::zeroed();
         ctx.version = self.tick_count;
-        ctx.timestamp_ns = 1700000000_000_000_000 + self.tick_count * 100_000_000; // 100ms ticks
+        ctx.timestamp_ns = 1_700_000_000_000_000_000 + self.tick_count * 100_000_000; // 100ms ticks
         ctx.set_instrument_id("SOL-USDC.OKX");
         ctx.set_market_state(&market_state);
         ctx.position_size = self.position_size;
